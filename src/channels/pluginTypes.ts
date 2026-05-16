@@ -37,6 +37,7 @@ export interface ChannelPluginAccountPatch {
   defaultPermissionMode?: ChannelDefaultPermissionMode;
   allowedChannels?: string[] | Record<string, DiscordChannelMode>;
   autoThreadOnMention?: boolean;
+  inboundDebounceMs?: number;
   transcribeVoice?: boolean;
 }
 
