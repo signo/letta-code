@@ -38,6 +38,7 @@ export interface ChannelPluginAccountPatch {
   allowedChannels?: string[] | Record<string, DiscordChannelMode>;
   autoThreadOnMention?: boolean;
   acknowledgeMessageReaction?: boolean;
+  removeStaleConversations?: boolean;
   inboundDebounceMs?: number;
   transcribeVoice?: boolean;
 }
