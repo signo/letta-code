@@ -146,6 +146,7 @@ function makeDefaultLegacyAccount(
           : { ...config.allowedChannels }
         : undefined,
       autoThreadOnMention: config.autoThreadOnMention,
+      threadPolicyByChannel: config.threadPolicyByChannel,
       agentId: null,
       defaultPermissionMode: config.defaultPermissionMode ?? "standard",
       createdAt: now,
