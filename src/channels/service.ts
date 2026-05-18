@@ -448,8 +448,7 @@ function toAccountSnapshot(account: ChannelAccount): ChannelAccountSnapshot {
       agentId: account.agentId,
       defaultPermissionMode: account.defaultPermissionMode ?? "standard",
       autoThreadOnMention: account.autoThreadOnMention ?? false,
-      inboundDebounceMs: account.inboundDebounceMs ?? 0,
-      inboundDebounceMs: account.inboundDebounceMs ?? 0,
+      inboundDebounceMs: account.inboundDebounceMs,
       createdAt: account.createdAt,
       updatedAt: account.updatedAt,
     };
@@ -740,7 +739,7 @@ export function getChannelConfigSnapshot(
       agentId: account.agentId,
       defaultPermissionMode: account.defaultPermissionMode ?? "standard",
       autoThreadOnMention: account.autoThreadOnMention ?? false,
-      inboundDebounceMs: account.inboundDebounceMs ?? 0,
+      inboundDebounceMs: account.inboundDebounceMs,
     };
   }
 
