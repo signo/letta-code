@@ -102,6 +102,7 @@ export interface ChannelConfigSnapshot {
   defaultPermissionMode?: ChannelDefaultPermissionMode;
   allowedChannels?: string[] | Record<string, DiscordChannelMode>;
   autoThreadOnMention?: boolean;
+  acknowledgeMessageReaction?: boolean;
   inboundDebounceMs?: number;
 }
 
@@ -168,6 +169,7 @@ export interface ChannelAccountSnapshot {
   defaultPermissionMode?: ChannelDefaultPermissionMode;
   allowedChannels?: string[] | Record<string, DiscordChannelMode>;
   autoThreadOnMention?: boolean;
+  acknowledgeMessageReaction?: boolean;
   inboundDebounceMs?: number;
   createdAt: string;
   updatedAt: string;
@@ -448,6 +450,7 @@ function toAccountSnapshot(account: ChannelAccount): ChannelAccountSnapshot {
       agentId: account.agentId,
       defaultPermissionMode: account.defaultPermissionMode ?? "standard",
       autoThreadOnMention: account.autoThreadOnMention ?? false,
+      acknowledgeMessageReaction: account.acknowledgeMessageReaction ?? false,
       inboundDebounceMs: account.inboundDebounceMs,
       createdAt: account.createdAt,
       updatedAt: account.updatedAt,
@@ -530,6 +533,7 @@ function createAccountFromPatch(
       allowedUsers: normalizedPatch.allowedUsers ?? [],
       allowedChannels: normalizedPatch.allowedChannels ?? [],
       autoThreadOnMention: normalizedPatch.autoThreadOnMention,
+      acknowledgeMessageReaction: normalizedPatch.acknowledgeMessageReaction,
       inboundDebounceMs: normalizedPatch.inboundDebounceMs,
       createdAt: now,
       updatedAt: now,
@@ -611,6 +615,9 @@ function mergeAccountPatch(
       autoThreadOnMention:
         normalizedPatch.autoThreadOnMention ??
         existing.autoThreadOnMention,
+      acknowledgeMessageReaction:
+        normalizedPatch.acknowledgeMessageReaction ??
+        existing.acknowledgeMessageReaction,
       inboundDebounceMs:
         normalizedPatch.inboundDebounceMs ??
         existing.inboundDebounceMs,
@@ -739,6 +746,7 @@ export function getChannelConfigSnapshot(
       agentId: account.agentId,
       defaultPermissionMode: account.defaultPermissionMode ?? "standard",
       autoThreadOnMention: account.autoThreadOnMention ?? false,
+      acknowledgeMessageReaction: account.acknowledgeMessageReaction ?? false,
       inboundDebounceMs: account.inboundDebounceMs,
     };
   }
@@ -793,6 +801,7 @@ export async function setChannelConfigLive(
       allowedUsers: normalizedPatch.allowedUsers,
       allowedChannels: normalizedPatch.allowedChannels,
       autoThreadOnMention: normalizedPatch.autoThreadOnMention,
+      acknowledgeMessageReaction: normalizedPatch.acknowledgeMessageReaction,
       inboundDebounceMs: normalizedPatch.inboundDebounceMs,
       config: normalizedPatch.config,
       displayName: existing.displayName,
@@ -815,6 +824,8 @@ export async function setChannelConfigLive(
         allowedUsers: normalizedPatch.allowedUsers,
         allowedChannels: normalizedPatch.allowedChannels,
         autoThreadOnMention: normalizedPatch.autoThreadOnMention,
+        acknowledgeMessageReaction:
+          normalizedPatch.acknowledgeMessageReaction,
         inboundDebounceMs: normalizedPatch.inboundDebounceMs,
         transcribeVoice: normalizedPatch.transcribeVoice,
         config: normalizedPatch.config,
