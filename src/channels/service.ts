@@ -926,13 +926,11 @@ export async function setChannelConfigLive(
       dmPolicy: normalizedPatch.dmPolicy,
       allowedUsers: normalizedPatch.allowedUsers,
       allowedChannels: normalizedPatch.allowedChannels,
-<<<<<<< HEAD
       autoThreadOnMention: normalizedPatch.autoThreadOnMention,
       threadPolicyByChannel: normalizedPatch.threadPolicyByChannel,
       acknowledgeMessageReaction: normalizedPatch.acknowledgeMessageReaction,
       removeStaleRoutes: normalizedPatch.removeStaleRoutes,
       inboundDebounceMs: normalizedPatch.inboundDebounceMs,
-=======
       agentId: normalizedPatch.agentId,
       selfChatMode: normalizedPatch.selfChatMode,
       groupMode: normalizedPatch.groupMode,
@@ -941,7 +939,6 @@ export async function setChannelConfigLive(
       transcribeVoice: normalizedPatch.transcribeVoice,
       downloadMedia: normalizedPatch.downloadMedia,
       mediaMaxBytes: normalizedPatch.mediaMaxBytes,
->>>>>>> pr-2102
       config: normalizedPatch.config,
       displayName: existing.displayName,
     });
@@ -962,19 +959,16 @@ export async function setChannelConfigLive(
         dmPolicy: normalizedPatch.dmPolicy,
         allowedUsers: normalizedPatch.allowedUsers,
         allowedChannels: normalizedPatch.allowedChannels,
-<<<<<<< HEAD
         autoThreadOnMention: normalizedPatch.autoThreadOnMention,
         threadPolicyByChannel: normalizedPatch.threadPolicyByChannel,
         acknowledgeMessageReaction: normalizedPatch.acknowledgeMessageReaction,
         removeStaleRoutes: normalizedPatch.removeStaleRoutes,
         inboundDebounceMs: normalizedPatch.inboundDebounceMs,
-=======
         agentId: normalizedPatch.agentId,
         selfChatMode: normalizedPatch.selfChatMode,
         groupMode: normalizedPatch.groupMode,
         allowedGroups: normalizedPatch.allowedGroups,
         mentionPatterns: normalizedPatch.mentionPatterns,
->>>>>>> pr-2102
         transcribeVoice: normalizedPatch.transcribeVoice,
         downloadMedia: normalizedPatch.downloadMedia,
         mediaMaxBytes: normalizedPatch.mediaMaxBytes,
