@@ -101,12 +101,29 @@ export function resolveLidToPhoneJid(params: {
 
   const repo = (
     sock as
-      | { signalRepository?: { lidMapping?: Map<string, string> } }
+      | {
+          signalRepository?: {
+            lidMapping?:
+              | Map<string, string>
+              | Record<string, string>
+              | { get?: (key: string) => string | undefined };
+          };
+        }
       | undefined
   )?.signalRepository;
-  const mapped = normalizeMaybePhoneJid(
-    repo?.lidMapping?.get(stripDeviceSuffix(lidJid)),
-  );
+  const lidKey = stripDeviceSuffix(lidJid);
+  const rawLidMapping = repo?.lidMapping;
+  const mappedValue =
+    rawLidMapping instanceof Map
+      ? rawLidMapping.get(lidKey)
+      : typeof rawLidMapping === "object" && rawLidMapping
+        ? typeof (rawLidMapping as { get?: unknown }).get === "function"
+          ? (rawLidMapping as { get: (key: string) => string | undefined }).get(
+              lidKey,
+            )
+          : (rawLidMapping as Record<string, string>)[lidKey]
+        : undefined;
+  const mapped = normalizeMaybePhoneJid(mappedValue);
   if (mapped) return mapped;
 
   return null;
@@ -132,12 +149,28 @@ export function resolveSendJid(params: {
 
   const repo = (
     sock as
-      | { signalRepository?: { lidMapping?: Map<string, string> } }
+      | {
+          signalRepository?: {
+            lidMapping?:
+              | Map<string, string>
+              | Record<string, string>
+              | { get?: (key: string) => string | undefined };
+          };
+        }
       | undefined
   )?.signalRepository;
-  const signalMapped = normalizeMaybePhoneJid(
-    repo?.lidMapping?.get(normalized),
-  );
+  const rawLidMapping = repo?.lidMapping;
+  const signalMappedValue =
+    rawLidMapping instanceof Map
+      ? rawLidMapping.get(normalized)
+      : typeof rawLidMapping === "object" && rawLidMapping
+        ? typeof (rawLidMapping as { get?: unknown }).get === "function"
+          ? (rawLidMapping as { get: (key: string) => string | undefined }).get(
+              normalized,
+            )
+          : (rawLidMapping as Record<string, string>)[normalized]
+        : undefined;
+  const signalMapped = normalizeMaybePhoneJid(signalMappedValue);
   if (signalMapped) return signalMapped;
 
   throw new Error(`Cannot send to unresolved WhatsApp LID: ${chatId}`);
