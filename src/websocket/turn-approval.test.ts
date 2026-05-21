@@ -1,6 +1,9 @@
 import { describe, expect, test } from "bun:test";
 import { __listenClientTestUtils } from "@/websocket/listen-client";
-import { resolveChannelApprovalSource } from "@/websocket/listener/turn-approval";
+import {
+  resolveChannelApprovalSource,
+  shouldAutoApproveChannelMessageTool,
+} from "@/websocket/listener/turn-approval";
 
 describe("resolveChannelApprovalSource", () => {
   test("keeps channel approvals attached when coalesced messages share one logical scope", () => {
@@ -59,5 +62,39 @@ describe("resolveChannelApprovalSource", () => {
     ];
 
     expect(resolveChannelApprovalSource(runtime)).toBeNull();
+  });
+
+  test("auto-approves MessageChannel only for a single routed channel turn", () => {
+    const runtime = __listenClientTestUtils.createRuntime();
+    runtime.activeChannelTurnSources = [
+      {
+        channel: "whatsapp",
+        accountId: "acct-whatsapp",
+        chatId: "210565536456917@lid",
+        chatType: "direct",
+        messageId: "msg-1",
+        threadId: null,
+        agentId: "agent-1",
+        conversationId: "conv-1",
+      },
+    ];
+
+    expect(
+      shouldAutoApproveChannelMessageTool({
+        runtime,
+        toolName: "MessageChannel",
+      }),
+    ).toBe(true);
+    expect(
+      shouldAutoApproveChannelMessageTool({ runtime, toolName: "Bash" }),
+    ).toBe(false);
+
+    runtime.activeChannelTurnSources = [];
+    expect(
+      shouldAutoApproveChannelMessageTool({
+        runtime,
+        toolName: "MessageChannel",
+      }),
+    ).toBe(false);
   });
 });

@@ -123,6 +123,16 @@ export function resolveChannelApprovalSource(
   return [...sourcesByScope.values()].at(-1) ?? null;
 }
 
+export function shouldAutoApproveChannelMessageTool(params: {
+  runtime: ConversationRuntime;
+  toolName: string;
+}): boolean {
+  return (
+    params.toolName === "MessageChannel" &&
+    resolveChannelApprovalSource(params.runtime) !== null
+  );
+}
+
 async function maybeReadPlanPreview(
   toolName: string,
   turnPermissionModeState: import("@/tools/manager").PermissionModeState,
@@ -232,8 +242,18 @@ export async function handleApprovalStop(params: {
   clearPendingApprovalBatchIds(runtime, approvals);
   rememberPendingApprovalBatchIds(runtime, approvals, dequeuedBatchId);
 
+  const channelAutoAllowed = approvals.filter((approval) =>
+    shouldAutoApproveChannelMessageTool({
+      runtime,
+      toolName: approval.toolName,
+    }),
+  );
+  const approvalsForClassification = approvals.filter(
+    (approval) => !channelAutoAllowed.includes(approval),
+  );
+
   const { autoAllowed, autoDenied, needsUserInput } =
-    await classifyApprovalsWithSuggestions(approvals, {
+    await classifyApprovalsWithSuggestions(approvalsForClassification, {
       alwaysRequiresUserInput: isInteractiveApprovalTool,
       treatAskAsDeny: false,
       requireArgsForAutoApprove: true,
@@ -279,6 +299,10 @@ export async function handleApprovalStop(params: {
   };
 
   const decisions: Decision[] = [
+    ...channelAutoAllowed.map((approval) => ({
+      type: "approve" as const,
+      approval,
+    })),
     ...autoAllowed.map((ac) => ({
       type: "approve" as const,
       approval: ac.approval,
