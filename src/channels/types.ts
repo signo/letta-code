@@ -215,6 +215,13 @@ export interface InboundChannelMessage {
   reaction?: ChannelReactionNotification;
   /** Supplemental thread context captured before the triggering message. */
   threadContext?: ChannelThreadContext;
+  /**
+   * WhatsApp-specific: resolved phone JID when the inbound chatId is an LID.
+   * Carries the phone-number-based JID (e.g. "34600216777@s.whatsapp.net")
+   * alongside the LID-based chatId so the agent can see both identities.
+   * Null when the chatId is already a phone JID or no PN mapping is available.
+   */
+  resolvedPhoneJid?: string | null;
 }
 
 export interface OutboundChannelMessage {

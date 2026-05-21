@@ -1,11 +1,12 @@
-import { formatChannelControlRequestPrompt } from "../interactive";
+import { formatChannelControlRequestPrompt } from "@/channels/interactive";
 import type {
   ChannelAdapter,
   ChannelControlRequestEvent,
   InboundChannelMessage,
   OutboundChannelMessage,
   WhatsAppChannelAccount,
-} from "../types";
+} from "@/channels/types";
+import type { BaileysSocketLike } from "./baileysCompat";
 import {
   isGroupJid,
   isLidJid,
@@ -24,7 +25,6 @@ import {
   extractReplyParticipant,
   extractWhatsAppText,
 } from "./media";
-import type { BaileysSocketLike } from "./baileysCompat";
 import { loadWhatsAppModule } from "./runtime";
 import { createWhatsAppSocket, getWhatsAppAuthDir } from "./session";
 import { setWhatsAppConnectionState } from "./state";
@@ -344,12 +344,15 @@ export function createWhatsAppAdapter(
     remoteJid: string,
     selfChat: boolean,
     msg: WhatsAppMessage,
-  ): string {
+  ): { chatId: string; resolvedPhoneJid: string | null } {
     const normalizedRemote = stripDeviceSuffix(remoteJid);
     if (selfChat) {
-      if (selfPhoneJid) return selfPhoneJid;
+      if (selfPhoneJid) {
+        return { chatId: selfPhoneJid, resolvedPhoneJid: selfPhoneJid };
+      }
       const digits = senderIdFromJid(remoteJid);
-      return phoneDigitsToJid(digits) || normalizedRemote;
+      const fallback = phoneDigitsToJid(digits) || normalizedRemote;
+      return { chatId: fallback, resolvedPhoneJid: fallback };
     }
     if (isLidJid(normalizedRemote)) {
       const resolved = resolveLidToPhoneJid({
@@ -359,10 +362,11 @@ export function createWhatsAppAdapter(
       });
       if (resolved) {
         lidToJid.set(normalizedRemote, resolved);
-        return resolved;
+        return { chatId: normalizedRemote, resolvedPhoneJid: resolved };
       }
+      return { chatId: normalizedRemote, resolvedPhoneJid: null };
     }
-    return normalizedRemote;
+    return { chatId: normalizedRemote, resolvedPhoneJid: normalizedRemote };
   }
 
   async function getGroupLabel(groupJid: string): Promise<string | undefined> {
@@ -408,8 +412,8 @@ export function createWhatsAppAdapter(
       if (isHistory || timestamp < connectedAtMs - 1000) continue;
 
       const group = isGroupJid(remoteJid);
-      const chatId = group
-        ? stripDeviceSuffix(remoteJid)
+      const { chatId, resolvedPhoneJid } = group
+        ? { chatId: stripDeviceSuffix(remoteJid), resolvedPhoneJid: null }
         : resolveInboundChatId(remoteJid, selfChat, msg);
       if (rememberSeen(`${chatId}:${messageId}`)) continue;
 
@@ -472,6 +476,7 @@ export function createWhatsAppAdapter(
             ? attachmentResult.attachments
             : undefined,
         raw: msg,
+        resolvedPhoneJid: group ? null : resolvedPhoneJid,
       };
 
       console.log(

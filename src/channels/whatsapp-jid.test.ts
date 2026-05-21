@@ -53,6 +53,35 @@ describe("WhatsApp JID helpers", () => {
     ).toBe(true);
   });
 
+  test("matches allowlisted users by exact LID string", () => {
+    // LID strings match exactly
+    expect(
+      allowedUsersIncludes(["210565536456917@lid"], "210565536456917@lid"),
+    ).toBe(true);
+    // Digit normalization also catches bare digits vs LID form
+    // because normalizePhoneLike("210565536456917@lid") extracts "210565536456917"
+    expect(
+      allowedUsersIncludes(["210565536456917@lid"], "210565536456917"),
+    ).toBe(true);
+    // Allowlist can mix PN and LID entries
+    expect(
+      allowedUsersIncludes(
+        ["34600216777", "210565536456917@lid"],
+        "210565536456917@lid",
+      ),
+    ).toBe(true);
+    expect(
+      allowedUsersIncludes(
+        ["34600216777", "210565536456917@lid"],
+        "34600216777",
+      ),
+    ).toBe(true);
+    // Unrelated LID does not match
+    expect(allowedUsersIncludes(["999888777@lid"], "210565536456917@lid")).toBe(
+      false,
+    );
+  });
+
   test("falls back to normalized LID when no phone mapping exists", () => {
     // Unresolvable LID → fall back to the LID itself (Baileys accepts it)
     expect(resolveSendJid({ chatId: "abc@lid" })).toBe("abc@lid");
@@ -106,9 +135,9 @@ describe("WhatsApp JID helpers", () => {
   });
 
   test("passes phone JID through unchanged", () => {
-    expect(
-      resolveSendJid({ chatId: "15551234567@s.whatsapp.net" }),
-    ).toBe("15551234567@s.whatsapp.net");
+    expect(resolveSendJid({ chatId: "15551234567@s.whatsapp.net" })).toBe(
+      "15551234567@s.whatsapp.net",
+    );
   });
 
   test("passes group JID through unchanged", () => {

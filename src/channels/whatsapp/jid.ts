@@ -84,9 +84,14 @@ export function allowedUsersIncludes(
   senderId: string,
 ): boolean {
   const normalizedSender = normalizePhoneLike(senderId);
-  return allowedUsers.some(
-    (entry) => normalizePhoneLike(entry) === normalizedSender,
-  );
+  return allowedUsers.some((entry) => {
+    // Exact match first (covers LID strings like "210565536456917@lid")
+    const trimmed = entry.trim();
+    if (trimmed === senderId) return true;
+    // Phone-digit comparison (covers "+34600216777" vs "34600216777")
+    if (normalizePhoneLike(entry) === normalizedSender) return true;
+    return false;
+  });
 }
 
 export function resolveLidToPhoneJid(params: {
