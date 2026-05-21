@@ -96,6 +96,30 @@ describe("lookupLidMapping (Baileys compat boundary)", () => {
     expect(lookupLidMapping(sock, lidKey)).toBe(v7Value);
   });
 
+  test("falls back when getPNForLID returns a non-string value", () => {
+    const sock = {
+      signalRepository: {
+        lidMapping: {
+          getPNForLID: () => ({ jid: phoneJid }),
+          get: (key: string) =>
+            key === lidKey ? phoneJid : undefined,
+        },
+      },
+    };
+    expect(lookupLidMapping(sock, lidKey)).toBe(phoneJid);
+  });
+
+  test("returns undefined when all mapping shapes return non-string values", () => {
+    const sock = {
+      signalRepository: {
+        lidMapping: {
+          getPNForLID: () => Promise.resolve(phoneJid),
+        },
+      },
+    };
+    expect(lookupLidMapping(sock, lidKey)).toBeUndefined();
+  });
+
   test("falls through to Record access when .get() is not a function", () => {
     const sock = {
       signalRepository: {

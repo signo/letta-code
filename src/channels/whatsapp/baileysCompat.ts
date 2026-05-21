@@ -23,10 +23,10 @@
  * - v7: structured object with getPNForLID() method
  */
 export type BaileysLidMapping =
-  | Map<string, string>
-  | Record<string, string>
-  | { get?: (key: string) => string | undefined }
-  | { getPNForLID?: (lid: string) => string | undefined };
+  | Map<string, unknown>
+  | Record<string, unknown>
+  | { get?: (key: string) => unknown }
+  | { getPNForLID?: (lid: string) => unknown };
 
 /** Socket subset relevant to LID resolution. */
 export type BaileysSocketLike = {
@@ -36,6 +36,10 @@ export type BaileysSocketLike = {
 };
 
 // ─── SSOT: raw LID → PN lookup ──────────────────────────────────────────────
+
+function stringOrUndefined(value: unknown): string | undefined {
+  return typeof value === "string" ? value : undefined;
+}
 
 /**
  * Look up a raw LID→PN value from signalRepository.lidMapping.
@@ -58,13 +62,14 @@ export function lookupLidMapping(
   if (
     typeof (mapping as { getPNForLID?: unknown }).getPNForLID === "function"
   ) {
-    return (mapping as { getPNForLID: (lid: string) => string | undefined })
+    const value = (mapping as { getPNForLID: (lid: string) => unknown })
       .getPNForLID(lidKey);
+    if (typeof value === "string") return value;
   }
 
   // Map instance
   if (mapping instanceof Map) {
-    return mapping.get(lidKey);
+    return stringOrUndefined(mapping.get(lidKey));
   }
 
   // Object with .get() method (some v6 builds)
@@ -72,14 +77,14 @@ export function lookupLidMapping(
     typeof mapping === "object" &&
     typeof (mapping as { get?: unknown }).get === "function"
   ) {
-    return (mapping as { get: (key: string) => string | undefined }).get(
+    return stringOrUndefined((mapping as { get: (key: string) => unknown }).get(
       lidKey,
-    );
+    ));
   }
 
   // Plain Record / object
   if (typeof mapping === "object") {
-    return (mapping as Record<string, string>)[lidKey];
+    return stringOrUndefined((mapping as Record<string, unknown>)[lidKey]);
   }
 
   return undefined;
