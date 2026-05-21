@@ -126,11 +126,43 @@ export function resolveChannelApprovalSource(
 export function shouldAutoApproveChannelMessageTool(params: {
   runtime: ConversationRuntime;
   toolName: string;
+  toolArgs?: string;
 }): boolean {
-  return (
-    params.toolName === "MessageChannel" &&
-    resolveChannelApprovalSource(params.runtime) !== null
-  );
+  if (params.toolName !== "MessageChannel") {
+    return false;
+  }
+
+  const source = resolveChannelApprovalSource(params.runtime);
+  if (!source) {
+    return false;
+  }
+
+  // Defense-in-depth: only auto-approve if the MessageChannel args explicitly
+  // target the same channel and chat_id as the active routed turn source.
+  // This prevents a misbehaving LLM from auto-sending to a different
+  // channel/chat, or sending without specifying a target, during a routed turn.
+  if (!params.toolArgs) {
+    return false;
+  }
+
+  try {
+    const args = JSON.parse(params.toolArgs) as Record<string, unknown>;
+    const argChannel = typeof args.channel === "string" ? args.channel : null;
+    const argChatId = typeof args.chat_id === "string" ? args.chat_id : null;
+
+    // Require both channel and chat_id to be present and matching.
+    if (argChannel === null || argChannel !== source.channel) {
+      return false;
+    }
+    if (argChatId === null || argChatId !== source.chatId) {
+      return false;
+    }
+  } catch {
+    // Malformed args — let normal approval path handle it.
+    return false;
+  }
+
+  return true;
 }
 
 async function maybeReadPlanPreview(
@@ -246,6 +278,7 @@ export async function handleApprovalStop(params: {
     shouldAutoApproveChannelMessageTool({
       runtime,
       toolName: approval.toolName,
+      toolArgs: approval.toolArgs,
     }),
   );
   const approvalsForClassification = approvals.filter(

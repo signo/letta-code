@@ -64,7 +64,7 @@ describe("resolveChannelApprovalSource", () => {
     expect(resolveChannelApprovalSource(runtime)).toBeNull();
   });
 
-  test("auto-approves MessageChannel only for a single routed channel turn", () => {
+  test("auto-approves MessageChannel only when args match the single routed channel turn", () => {
     const runtime = __listenClientTestUtils.createRuntime();
     runtime.activeChannelTurnSources = [
       {
@@ -79,21 +79,91 @@ describe("resolveChannelApprovalSource", () => {
       },
     ];
 
+    // Matching args → auto-approve
+    expect(
+      shouldAutoApproveChannelMessageTool({
+        runtime,
+        toolName: "MessageChannel",
+        toolArgs: JSON.stringify({
+          channel: "whatsapp",
+          chat_id: "210565536456917@lid",
+          text: "hello",
+        }),
+      }),
+    ).toBe(true);
+
+    // Non-MessageChannel tool → never auto-approve
+    expect(
+      shouldAutoApproveChannelMessageTool({
+        runtime,
+        toolName: "Bash",
+        toolArgs: JSON.stringify({ command: "echo hi" }),
+      }),
+    ).toBe(false);
+
+    // No toolArgs → no auto-approve
     expect(
       shouldAutoApproveChannelMessageTool({
         runtime,
         toolName: "MessageChannel",
       }),
-    ).toBe(true);
-    expect(
-      shouldAutoApproveChannelMessageTool({ runtime, toolName: "Bash" }),
     ).toBe(false);
 
+    // Missing channel in args → no auto-approve
+    expect(
+      shouldAutoApproveChannelMessageTool({
+        runtime,
+        toolName: "MessageChannel",
+        toolArgs: JSON.stringify({ chat_id: "210565536456917@lid", text: "x" }),
+      }),
+    ).toBe(false);
+
+    // Missing chat_id in args → no auto-approve
+    expect(
+      shouldAutoApproveChannelMessageTool({
+        runtime,
+        toolName: "MessageChannel",
+        toolArgs: JSON.stringify({ channel: "whatsapp", text: "x" }),
+      }),
+    ).toBe(false);
+
+    // Mismatched channel → no auto-approve
+    expect(
+      shouldAutoApproveChannelMessageTool({
+        runtime,
+        toolName: "MessageChannel",
+        toolArgs: JSON.stringify({
+          channel: "telegram",
+          chat_id: "210565536456917@lid",
+          text: "x",
+        }),
+      }),
+    ).toBe(false);
+
+    // Mismatched chat_id → no auto-approve
+    expect(
+      shouldAutoApproveChannelMessageTool({
+        runtime,
+        toolName: "MessageChannel",
+        toolArgs: JSON.stringify({
+          channel: "whatsapp",
+          chat_id: "DIFFERENT",
+          text: "x",
+        }),
+      }),
+    ).toBe(false);
+
+    // No routed source → no auto-approve even with matching args
     runtime.activeChannelTurnSources = [];
     expect(
       shouldAutoApproveChannelMessageTool({
         runtime,
         toolName: "MessageChannel",
+        toolArgs: JSON.stringify({
+          channel: "whatsapp",
+          chat_id: "210565536456917@lid",
+          text: "x",
+        }),
       }),
     ).toBe(false);
   });
