@@ -362,8 +362,14 @@ export function createWhatsAppAdapter(
       });
       if (resolved) {
         lidToJid.set(normalizedRemote, resolved);
+        console.log(
+          `[WhatsApp:${account.accountId}] LID resolved: ${normalizedRemote} -> ${resolved}`,
+        );
         return { chatId: normalizedRemote, resolvedPhoneJid: resolved };
       }
+      console.log(
+        `[WhatsApp:${account.accountId}] LID not resolved: ${normalizedRemote} senderPn=${msg.key?.senderPn ?? "none"}`,
+      );
       return { chatId: normalizedRemote, resolvedPhoneJid: null };
     }
     return { chatId: normalizedRemote, resolvedPhoneJid: normalizedRemote };
