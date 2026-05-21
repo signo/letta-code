@@ -173,7 +173,10 @@ export function resolveSendJid(params: {
   const signalMapped = normalizeMaybePhoneJid(signalMappedValue);
   if (signalMapped) return signalMapped;
 
-  throw new Error(`Cannot send to unresolved WhatsApp LID: ${chatId}`);
+  // No phone JID mapping found — fall back to the normalized LID.
+  // Baileys accepts LID JIDs as send targets; if the message arrived on
+  // this LID, WhatsApp's servers already confirmed it is routable.
+  return normalized;
 }
 
 export function sanitizePathSegment(input: string): string {
