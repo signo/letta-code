@@ -236,6 +236,12 @@ export function buildChannelNotificationXml(
     attrs.push(`thread_id="${escapeXmlAttribute(msg.threadId)}"`);
   }
 
+  if (msg.resolvedPhoneJid) {
+    attrs.push(
+      `resolved_phone_jid="${escapeXmlAttribute(msg.resolvedPhoneJid)}"`,
+    );
+  }
+
   const attrString = attrs.join(" ");
   const escapedText = msg.text ? escapeXmlText(msg.text) : "";
   const reactionXml = buildReactionXml(msg);

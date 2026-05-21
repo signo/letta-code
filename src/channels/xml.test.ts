@@ -200,6 +200,38 @@ describe("formatChannelNotification", () => {
 
     expect(xml).not.toContain("sender_name=");
     expect(xml).not.toContain("message_id=");
+    expect(xml).not.toContain("resolved_phone_jid=");
+  });
+
+  test("includes resolved_phone_jid when present (WhatsApp LID routing)", () => {
+    const msg: InboundChannelMessage = {
+      channel: "whatsapp",
+      chatId: "210565536456917@lid",
+      senderId: "210565536456917",
+      text: "hello from LID",
+      timestamp: Date.now(),
+      resolvedPhoneJid: "34600216777@s.whatsapp.net",
+    };
+
+    const xml = buildChannelNotificationXml(msg);
+
+    expect(xml).toContain('chat_id="210565536456917@lid"');
+    expect(xml).toContain('resolved_phone_jid="34600216777@s.whatsapp.net"');
+  });
+
+  test("omits resolved_phone_jid when null", () => {
+    const msg: InboundChannelMessage = {
+      channel: "whatsapp",
+      chatId: "210565536456917@lid",
+      senderId: "210565536456917",
+      text: "hello",
+      timestamp: Date.now(),
+      resolvedPhoneJid: null,
+    };
+
+    const xml = buildChannelNotificationXml(msg);
+
+    expect(xml).not.toContain("resolved_phone_jid=");
   });
 
   test("includes Slack thread metadata in the notification xml", () => {
