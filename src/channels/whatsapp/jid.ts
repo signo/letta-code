@@ -1,3 +1,5 @@
+import { lookupLidMapping } from "./baileysCompat";
+
 export const WHATSAPP_CHANNEL_ID = "whatsapp";
 export const WHATSAPP_PHONE_SUFFIX = "@s.whatsapp.net";
 export const WHATSAPP_LID_SUFFIX = "@lid";
@@ -99,31 +101,9 @@ export function resolveLidToPhoneJid(params: {
   const senderPn = normalizeMaybePhoneJid(msg?.key?.senderPn ?? undefined);
   if (senderPn) return senderPn;
 
-  const repo = (
-    sock as
-      | {
-          signalRepository?: {
-            lidMapping?:
-              | Map<string, string>
-              | Record<string, string>
-              | { get?: (key: string) => string | undefined };
-          };
-        }
-      | undefined
-  )?.signalRepository;
   const lidKey = stripDeviceSuffix(lidJid);
-  const rawLidMapping = repo?.lidMapping;
-  const mappedValue =
-    rawLidMapping instanceof Map
-      ? rawLidMapping.get(lidKey)
-      : typeof rawLidMapping === "object" && rawLidMapping
-        ? typeof (rawLidMapping as { get?: unknown }).get === "function"
-          ? (rawLidMapping as { get: (key: string) => string | undefined }).get(
-              lidKey,
-            )
-          : (rawLidMapping as Record<string, string>)[lidKey]
-        : undefined;
-  const mapped = normalizeMaybePhoneJid(mappedValue);
+  const rawValue = lookupLidMapping(sock, lidKey);
+  const mapped = normalizeMaybePhoneJid(rawValue);
   if (mapped) return mapped;
 
   return null;
@@ -147,30 +127,8 @@ export function resolveSendJid(params: {
   const mapped = normalizeMaybePhoneJid(lidToJid?.get(normalized));
   if (mapped) return mapped;
 
-  const repo = (
-    sock as
-      | {
-          signalRepository?: {
-            lidMapping?:
-              | Map<string, string>
-              | Record<string, string>
-              | { get?: (key: string) => string | undefined };
-          };
-        }
-      | undefined
-  )?.signalRepository;
-  const rawLidMapping = repo?.lidMapping;
-  const signalMappedValue =
-    rawLidMapping instanceof Map
-      ? rawLidMapping.get(normalized)
-      : typeof rawLidMapping === "object" && rawLidMapping
-        ? typeof (rawLidMapping as { get?: unknown }).get === "function"
-          ? (rawLidMapping as { get: (key: string) => string | undefined }).get(
-              normalized,
-            )
-          : (rawLidMapping as Record<string, string>)[normalized]
-        : undefined;
-  const signalMapped = normalizeMaybePhoneJid(signalMappedValue);
+  const rawValue = lookupLidMapping(sock, normalized);
+  const signalMapped = normalizeMaybePhoneJid(rawValue);
   if (signalMapped) return signalMapped;
 
   // No phone JID mapping found — fall back to the normalized LID.

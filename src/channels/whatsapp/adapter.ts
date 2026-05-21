@@ -24,6 +24,7 @@ import {
   extractReplyParticipant,
   extractWhatsAppText,
 } from "./media";
+import type { BaileysSocketLike } from "./baileysCompat";
 import { loadWhatsAppModule } from "./runtime";
 import { createWhatsAppSocket, getWhatsAppAuthDir } from "./session";
 import { setWhatsAppConnectionState } from "./state";
@@ -38,11 +39,10 @@ type EventEmitterLike = {
   on?: (event: string, handler: (payload: unknown) => void) => void;
 };
 
-type WhatsAppSocket = {
+type WhatsAppSocket = BaileysSocketLike & {
   ev?: EventEmitterLike;
   ws?: { close?: () => void };
   user?: { id?: string; lid?: string };
-  signalRepository?: { lidMapping?: Map<string, string> };
   sendMessage?: (
     jid: string,
     payload: Record<string, unknown>,
