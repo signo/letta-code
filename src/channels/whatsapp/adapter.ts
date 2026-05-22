@@ -32,6 +32,7 @@ import { setWhatsAppConnectionState } from "./state";
 const CHANNEL_ID = "whatsapp";
 const DEDUPE_MAX_SIZE = 5000;
 const RECONNECT_MAX_MS = 30_000;
+const WATCHDOG_INTERVAL_MS = 5 * 60 * 1000;
 const MAX_MENTION_PATTERN_LENGTH = 256;
 const MENTION_MATCH_TEXT_MAX_LENGTH = 2000;
 
@@ -188,6 +189,7 @@ export function createWhatsAppAdapter(
   let stopping = false;
   let reconnectAttempts = 0;
   let reconnectTimer: ReturnType<typeof setTimeout> | null = null;
+  let watchdogTimer: ReturnType<typeof setTimeout> | null = null;
   let selfPhoneJid: string | null = null;
   let selfLid: string | null = null;
   let connectedAtMs = 0;
@@ -250,7 +252,29 @@ export function createWhatsAppAdapter(
     }
   }
 
+  function resetWatchdog(generation: number): void {
+    if (watchdogTimer) clearTimeout(watchdogTimer);
+    watchdogTimer = setTimeout(() => {
+      if (generation !== connectionGeneration) return;
+      if (stopping || !running) return;
+      const elapsed = Math.round((Date.now() - connectedAtMs) / 1000);
+      console.warn(
+        `[WhatsApp:${account.accountId}] watchdog fired: no activity for ${elapsed}s, triggering reconnect`,
+      );
+      clearActiveSocket(false);
+      scheduleReconnect("watchdog: no activity");
+    }, WATCHDOG_INTERVAL_MS);
+  }
+
+  function clearWatchdog(): void {
+    if (watchdogTimer) {
+      clearTimeout(watchdogTimer);
+      watchdogTimer = null;
+    }
+  }
+
   function scheduleReconnect(reason?: string): void {
+    clearWatchdog();
     if (stopping || !running || reconnectTimer) return;
     reconnectAttempts += 1;
     const delay = Math.min(RECONNECT_MAX_MS, 1000 * 2 ** reconnectAttempts);
@@ -284,6 +308,7 @@ export function createWhatsAppAdapter(
         if (generation !== connectionGeneration) return;
         if (update.connection === "open") {
           reconnectAttempts = 0;
+          resetWatchdog(generation);
           selfPhoneJid = stripDeviceSuffix(sock?.user?.id ?? null) || null;
           selfLid = stripDeviceSuffix(sock?.user?.lid ?? null) || null;
           const mode = account.selfChatMode
@@ -298,6 +323,7 @@ export function createWhatsAppAdapter(
           const lastDisconnect = asRecord(update.lastDisconnect);
           const error = asRecord(lastDisconnect.error);
           if (isWhatsAppConflictDisconnect(update)) {
+            clearWatchdog();
             running = false;
             stopping = true;
             const message =
@@ -331,6 +357,7 @@ export function createWhatsAppAdapter(
     sock = result.sock as WhatsAppSocket;
     releaseSocketLease = result.release;
     sock.ev?.on?.("messages.upsert", (event) => {
+      resetWatchdog(generation);
       void handleMessagesUpsert(event).catch((error) => {
         console.error(
           `[WhatsApp:${account.accountId}] inbound handler failed:`,
@@ -526,6 +553,7 @@ export function createWhatsAppAdapter(
       if (!running) return;
       stopping = true;
       running = false;
+      clearWatchdog();
       if (reconnectTimer) {
         clearTimeout(reconnectTimer);
         reconnectTimer = null;
