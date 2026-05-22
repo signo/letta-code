@@ -8,6 +8,7 @@ import type {
   WhatsAppChannelAccount,
 } from "@/channels/types";
 import type { BaileysSocketLike } from "./baileysCompat";
+import { checkGroupEligibility } from "./groupPolicy";
 import {
   isGroupJid,
   isLidJid,
@@ -34,8 +35,6 @@ const CHANNEL_ID = "whatsapp";
 const DEDUPE_MAX_SIZE = 5000;
 const RECONNECT_MAX_MS = 30_000;
 const WATCHDOG_INTERVAL_MS = 5 * 60 * 1000;
-const MAX_MENTION_PATTERN_LENGTH = 256;
-const MENTION_MATCH_TEXT_MAX_LENGTH = 2000;
 const TYPING_PRESENCE = "composing";
 const IDLE_PRESENCE = "paused";
 
@@ -111,65 +110,6 @@ function preview(text: string): string {
 
 function getDisplayName(account: WhatsAppChannelAccount): string {
   return account.displayName ?? "WhatsApp";
-}
-
-function matchesSelf(
-  jid: string,
-  selfPhoneJid: string | null,
-  selfLid: string | null,
-): boolean {
-  const normalized = stripDeviceSuffix(jid);
-  return (
-    (!!selfPhoneJid && normalized === stripDeviceSuffix(selfPhoneJid)) ||
-    (!!selfLid && normalized === stripDeviceSuffix(selfLid))
-  );
-}
-
-function shouldProcessGroup(params: {
-  account: WhatsAppChannelAccount;
-  groupJid: string;
-  text: string;
-  mentionedJids: string[];
-  replyParticipant: string | null;
-  selfPhoneJid: string | null;
-  selfLid: string | null;
-}): boolean {
-  const {
-    account,
-    groupJid,
-    text,
-    mentionedJids,
-    replyParticipant,
-    selfPhoneJid,
-    selfLid,
-  } = params;
-  if (account.groupMode === "disabled") return false;
-  if (
-    account.allowedGroups?.length &&
-    !account.allowedGroups.includes(groupJid)
-  ) {
-    return false;
-  }
-  if (account.groupMode === "open") return true;
-  if (mentionedJids.some((jid) => matchesSelf(jid, selfPhoneJid, selfLid))) {
-    return true;
-  }
-  if (
-    replyParticipant &&
-    matchesSelf(replyParticipant, selfPhoneJid, selfLid)
-  ) {
-    return true;
-  }
-  const matchText = text.slice(0, MENTION_MATCH_TEXT_MAX_LENGTH);
-  for (const pattern of account.mentionPatterns ?? []) {
-    if (pattern.length > MAX_MENTION_PATTERN_LENGTH) continue;
-    try {
-      if (new RegExp(pattern, "i").test(matchText)) return true;
-    } catch {
-      // Ignore invalid user-provided patterns.
-    }
-  }
-  return false;
 }
 
 export function shouldMarkWhatsAppReadReceipt(params: {
@@ -535,15 +475,17 @@ export function createWhatsAppAdapter(
       const replyParticipant = extractReplyParticipant(msg.message);
       const groupAllowed = !group
         ? true
-        : shouldProcessGroup({
-            account,
+        : checkGroupEligibility({
+            groupMode: account.groupMode,
+            allowedGroups: account.allowedGroups,
+            mentionPatterns: account.mentionPatterns,
             groupJid: chatId,
             text: body,
             mentionedJids,
             replyParticipant,
             selfPhoneJid,
             selfLid,
-          });
+          }).eligible;
       if (!groupAllowed) continue;
 
       const chatLabel = group
