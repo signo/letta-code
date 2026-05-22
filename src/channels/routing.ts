@@ -70,6 +70,7 @@ export function loadRoutes(channelId: string): void {
             createdAt: route.createdAt ?? new Date().toISOString(),
             updatedAt:
               route.updatedAt ?? route.createdAt ?? new Date().toISOString(),
+            messagePrefix: route.messagePrefix,
           },
         );
       }
@@ -100,6 +101,7 @@ export function loadRoutes(channelId: string): void {
             createdAt: route.createdAt ?? new Date().toISOString(),
             updatedAt:
               route.updatedAt ?? route.createdAt ?? new Date().toISOString(),
+            messagePrefix: route.messagePrefix,
           },
         );
       }

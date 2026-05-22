@@ -1,4 +1,5 @@
 import { formatChannelControlRequestPrompt } from "@/channels/interactive";
+import { getRoute } from "@/channels/routing";
 import type {
   ChannelAdapter,
   ChannelControlRequestEvent,
@@ -33,6 +34,7 @@ import { setWhatsAppConnectionState } from "./state";
 
 const CHANNEL_ID = "whatsapp";
 const DEDUPE_MAX_SIZE = 5000;
+const MAX_MESSAGE_PREFIX_LENGTH = 5;
 const RECONNECT_MAX_MS = 30_000;
 const WATCHDOG_INTERVAL_MS = 5 * 60 * 1000;
 const TYPING_PRESENCE = "composing";
@@ -173,6 +175,15 @@ export function createWhatsAppAdapter(
   const lidToJid = new Map<string, string>();
   const messageStore = new Map<string, unknown>();
   const activeTypingChats = new Set<string>();
+
+  function getRouteMessagePrefix(chatId: string): string | undefined {
+    const route = getRoute(CHANNEL_ID, chatId, account.accountId);
+    const prefix = route?.messagePrefix?.trim();
+    if (!prefix) return undefined;
+    return prefix.length > MAX_MESSAGE_PREFIX_LENGTH
+      ? prefix.slice(0, MAX_MESSAGE_PREFIX_LENGTH)
+      : prefix;
+  }
 
   async function setTyping(chatId: string, typing: boolean): Promise<void> {
     const targetJid = resolveSendJid({
@@ -605,6 +616,10 @@ export function createWhatsAppAdapter(
       if (!running) throw new Error("WhatsApp adapter is not running.");
       if (!msg.text?.trim() && !msg.mediaPath?.trim() && !msg.reaction) {
         throw new Error("WhatsApp send requires message or media.");
+      }
+      const prefix = getRouteMessagePrefix(msg.chatId);
+      if (prefix && msg.text) {
+        msg = { ...msg, text: prefix + " " + msg.text };
       }
       const targetJid = resolveSendJid({
         chatId: msg.chatId,

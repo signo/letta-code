@@ -1344,10 +1344,11 @@ export class ChannelRegistry {
       config.dmPolicy === "allowlist" &&
       !allowedUsersIncludes(config.allowedUsers, msg.senderId)
     ) {
-      await adapter.sendDirectReply(
-        msg.chatId,
-        "You are not on the allowed users list for this WhatsApp account.",
-      );
+      const mode = config.notAllowedMode ?? "ignore";
+      if (mode === "reply") {
+        const replyText = config.notAllowedMessage?.trim() || "🚫";
+        await adapter.sendDirectReply(msg.chatId, replyText);
+      }
       return null;
     }
 

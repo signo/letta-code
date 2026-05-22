@@ -286,6 +286,8 @@ export interface ChannelRoute {
   createdAt: string;
   /** ISO 8601 update timestamp. */
   updatedAt?: string;
+  /** Optional prefix prepended to outbound messages on this route (max 5 chars). */
+  messagePrefix?: string;
 }
 
 // ── Config ────────────────────────────────────────────────────────
@@ -293,6 +295,7 @@ export interface ChannelRoute {
 export type DmPolicy = "pairing" | "allowlist" | "open";
 export type SlackChannelMode = "socket";
 export type WhatsAppGroupMode = "disabled" | "mention" | "open";
+export type WhatsAppNotAllowedMode = "ignore" | "reply";
 
 export interface ChannelAccountBinding {
   agentId: string | null;
@@ -527,6 +530,14 @@ export interface WhatsAppChannelAccount extends ChannelAccountBase {
   downloadMedia?: boolean;
   /** Maximum inbound media bytes to download. Undefined uses channel default. */
   mediaMaxBytes?: number;
+  /** How to handle messages from users not on the allowlist. Default: "ignore". */
+  notAllowedMode?: WhatsAppNotAllowedMode;
+  /** Reply text when notAllowedMode is "reply". Default: "🚫". */
+  notAllowedMessage?: string;
+  /** Directory path for outbound file attachments. Null/unset = disabled. */
+  attachDir?: string | null;
+  /** When true and attachDir is set, allow recursive directory access. Default: false. */
+  attachRecursive?: boolean;
 }
 
 export type ChannelAccount =
