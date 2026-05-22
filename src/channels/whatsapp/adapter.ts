@@ -177,7 +177,14 @@ export function createWhatsAppAdapter(
   const activeTypingChats = new Set<string>();
 
   function getRouteMessagePrefix(chatId: string): string | undefined {
-    const route = getRoute(CHANNEL_ID, chatId, account.accountId);
+    let route = getRoute(CHANNEL_ID, chatId, account.accountId);
+    // For LID chatIds, also check the resolved phone-number route
+    if (!route?.messagePrefix && isLidJid(chatId)) {
+      const resolved = resolveLidToPhoneJid({ lidJid: chatId, sock });
+      if (resolved) {
+        route = getRoute(CHANNEL_ID, resolved, account.accountId);
+      }
+    }
     const prefix = route?.messagePrefix?.trim();
     if (!prefix) return undefined;
     return prefix.length > MAX_MESSAGE_PREFIX_LENGTH
