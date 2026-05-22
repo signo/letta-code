@@ -2,6 +2,7 @@ import { formatChannelControlRequestPrompt } from "@/channels/interactive";
 import type {
   ChannelAdapter,
   ChannelControlRequestEvent,
+  ChannelTurnLifecycleEvent,
   InboundChannelMessage,
   OutboundChannelMessage,
   WhatsAppChannelAccount,
@@ -231,6 +232,34 @@ export function createWhatsAppAdapter(
   const seenMessageIds = new Set<string>();
   const lidToJid = new Map<string, string>();
   const messageStore = new Map<string, unknown>();
+  const activeTypingChats = new Set<string>();
+
+  async function setTyping(chatId: string, typing: boolean): Promise<void> {
+    const targetJid = resolveSendJid({
+      chatId,
+      selfPhoneJid,
+      selfLid,
+      lidToJid,
+      sock,
+    });
+    if (typing) {
+      if (activeTypingChats.has(chatId)) return;
+      activeTypingChats.add(chatId);
+      try {
+        await sock?.sendPresenceUpdate?.(TYPING_PRESENCE, targetJid);
+      } catch {
+        // best effort
+      }
+      return;
+    }
+    if (!activeTypingChats.has(chatId)) return;
+    activeTypingChats.delete(chatId);
+    try {
+      await sock?.sendPresenceUpdate?.(IDLE_PRESENCE, targetJid);
+    } catch {
+      // best effort
+    }
+  }
 
   function rememberSeen(id: string): boolean {
     if (seenMessageIds.has(id)) return true;
@@ -611,6 +640,7 @@ export function createWhatsAppAdapter(
       stopping = true;
       running = false;
       clearWatchdog();
+      activeTypingChats.clear();
       if (reconnectTimer) {
         clearTimeout(reconnectTimer);
         reconnectTimer = null;
@@ -725,6 +755,24 @@ export function createWhatsAppAdapter(
         } catch {
           // Presence is best-effort.
         }
+      }
+    },
+
+    async handleTurnLifecycleEvent(
+      event: ChannelTurnLifecycleEvent,
+    ): Promise<void> {
+      if (!running) return;
+      if (event.type === "queued") return;
+      if (event.type === "processing") {
+        for (const source of event.sources) {
+          if (source.channel !== CHANNEL_ID) continue;
+          await setTyping(source.chatId, true);
+        }
+        return;
+      }
+      for (const source of event.sources) {
+        if (source.channel !== CHANNEL_ID) continue;
+        await setTyping(source.chatId, false);
       }
     },
 
