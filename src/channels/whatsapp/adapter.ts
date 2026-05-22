@@ -35,6 +35,8 @@ const RECONNECT_MAX_MS = 30_000;
 const WATCHDOG_INTERVAL_MS = 5 * 60 * 1000;
 const MAX_MENTION_PATTERN_LENGTH = 256;
 const MENTION_MATCH_TEXT_MAX_LENGTH = 2000;
+const TYPING_PRESENCE = "composing";
+const IDLE_PRESENCE = "paused";
 
 type EventEmitterLike = {
   on?: (event: string, handler: (payload: unknown) => void) => void;
@@ -50,6 +52,7 @@ type WhatsAppSocket = BaileysSocketLike & {
     options?: Record<string, unknown>,
   ) => Promise<{ key?: { id?: string }; message?: unknown }>;
   sendPresenceUpdate?: (presence: string, jid?: string) => Promise<void>;
+  readMessages?: (keys: Array<Record<string, unknown>>) => Promise<void>;
   groupMetadata?: (jid: string) => Promise<{ subject?: string }>;
 };
 
@@ -166,6 +169,32 @@ function shouldProcessGroup(params: {
     }
   }
   return false;
+}
+
+export function shouldMarkWhatsAppReadReceipt(params: {
+  chatType: "direct" | "channel";
+  dmPolicy: string;
+  accepted: boolean;
+}): boolean {
+  const { chatType, accepted } = params;
+  if (!accepted) return false;
+  if (chatType !== "direct") return false;
+  return true;
+}
+
+export function buildWhatsAppReadReceiptKeys(params: {
+  remoteJid: string;
+  messageId: string;
+  participant?: string | null;
+}): Array<Record<string, unknown>> {
+  const base: Record<string, unknown> = {
+    remoteJid: params.remoteJid,
+    id: params.messageId,
+  };
+  if (params.participant) {
+    base.participant = params.participant;
+  }
+  return [base];
 }
 
 function buildQuotedOptions(
@@ -525,6 +554,24 @@ export function createWhatsAppAdapter(
           timestamp,
         },
       });
+      if (
+        shouldMarkWhatsAppReadReceipt({
+          chatType: inbound.chatType ?? "direct",
+          dmPolicy: account.dmPolicy,
+          accepted: true,
+        })
+      ) {
+        try {
+          const keys = buildWhatsAppReadReceiptKeys({
+            remoteJid,
+            messageId,
+            participant: msg.key?.participant ?? null,
+          });
+          await sock?.readMessages?.(keys);
+        } catch {
+          // best-effort read receipt
+        }
+      }
       await adapter.onMessage?.(inbound);
     }
   }
@@ -611,27 +658,35 @@ export function createWhatsAppAdapter(
         return { messageId: id };
       }
       try {
-        await sock?.sendPresenceUpdate?.("composing", targetJid);
+        await sock?.sendPresenceUpdate?.(TYPING_PRESENCE, targetJid);
       } catch {
         // Presence is best-effort.
       }
-      const payload = buildWhatsAppOutboundPayload(msg);
-      const result = await sendToWhatsApp(
-        targetJid,
-        payload,
-        buildQuotedOptions(targetJid, msg.replyToMessageId),
-      );
-      const id = result.key?.id ?? "";
-      rememberSent(id, result);
-      setWhatsAppConnectionState(account.accountId, {
-        status: "connected",
-        lastOutbound: {
-          chatId: msg.chatId,
-          messageId: id || undefined,
-          timestamp: Date.now(),
-        },
-      });
-      return { messageId: id };
+      try {
+        const payload = buildWhatsAppOutboundPayload(msg);
+        const result = await sendToWhatsApp(
+          targetJid,
+          payload,
+          buildQuotedOptions(targetJid, msg.replyToMessageId),
+        );
+        const id = result.key?.id ?? "";
+        rememberSent(id, result);
+        setWhatsAppConnectionState(account.accountId, {
+          status: "connected",
+          lastOutbound: {
+            chatId: msg.chatId,
+            messageId: id || undefined,
+            timestamp: Date.now(),
+          },
+        });
+        return { messageId: id };
+      } finally {
+        try {
+          await sock?.sendPresenceUpdate?.(IDLE_PRESENCE, targetJid);
+        } catch {
+          // Presence is best-effort.
+        }
+      }
     },
 
     async sendDirectReply(chatId, text, options) {
@@ -643,21 +698,34 @@ export function createWhatsAppAdapter(
         lidToJid,
         sock,
       });
-      const result = await sendToWhatsApp(
-        targetJid,
-        { text },
-        buildQuotedOptions(targetJid, options?.replyToMessageId),
-      );
-      const outId = result.key?.id ?? "";
-      rememberSent(outId, result);
-      setWhatsAppConnectionState(account.accountId, {
-        status: "connected",
-        lastOutbound: {
-          chatId,
-          messageId: outId || undefined,
-          timestamp: Date.now(),
-        },
-      });
+      try {
+        await sock?.sendPresenceUpdate?.(TYPING_PRESENCE, targetJid);
+      } catch {
+        // Presence is best-effort.
+      }
+      try {
+        const result = await sendToWhatsApp(
+          targetJid,
+          { text },
+          buildQuotedOptions(targetJid, options?.replyToMessageId),
+        );
+        const outId = result.key?.id ?? "";
+        rememberSent(outId, result);
+        setWhatsAppConnectionState(account.accountId, {
+          status: "connected",
+          lastOutbound: {
+            chatId,
+            messageId: outId || undefined,
+            timestamp: Date.now(),
+          },
+        });
+      } finally {
+        try {
+          await sock?.sendPresenceUpdate?.(IDLE_PRESENCE, targetJid);
+        } catch {
+          // Presence is best-effort.
+        }
+      }
     },
 
     async handleControlRequestEvent(event: ChannelControlRequestEvent) {
