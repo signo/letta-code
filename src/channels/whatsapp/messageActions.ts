@@ -23,6 +23,9 @@ async function sendWhatsAppMessage(
   }
 
   const formatted = formatText(text);
+  console.log(
+    `[WhatsApp:${route.accountId}] messageAction send chatId=${request.chatId} hasMedia=${Boolean(request.mediaPath)} textLen=${formatted.text.length}`,
+  );
   const result = await adapter.sendMessage({
     channel: "whatsapp",
     accountId: route.accountId,
