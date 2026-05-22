@@ -466,7 +466,7 @@ export function createWhatsAppAdapter(
 
       const senderJid = group
         ? (msg.key?.participant ?? msg.key?.senderPn ?? remoteJid)
-        : chatId;
+        : (resolvedPhoneJid ?? chatId);
       const senderId = selfChat
         ? senderIdFromJid(selfPhoneJid ?? chatId)
         : senderIdFromJid(senderJid);
