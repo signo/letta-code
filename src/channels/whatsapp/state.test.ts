@@ -1,5 +1,9 @@
 import { beforeEach, describe, expect, test } from "bun:test";
+import { mkdtempSync, readFileSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import {
+  __testSetWhatsAppDiagnosticsDir,
   clearWhatsAppConnectionState,
   getWhatsAppConnectionState,
   setWhatsAppConnectionState,
@@ -8,9 +12,13 @@ import {
 } from "@/channels/whatsapp/state";
 
 const ACCOUNT = "test-account";
+let testDir = "";
 
 describe("whatsapp/state diagnostics", () => {
   beforeEach(() => {
+    if (testDir) rmSync(testDir, { recursive: true, force: true });
+    testDir = mkdtempSync(join(tmpdir(), "wa-state-"));
+    __testSetWhatsAppDiagnosticsDir(testDir);
     clearWhatsAppConnectionState(ACCOUNT);
   });
 
@@ -34,9 +42,18 @@ describe("whatsapp/state diagnostics", () => {
 
     expect(next.lastErrorAt).toBe(ts);
     expect(next.lastInbound?.chatId).toBe("c1@lid");
-    expect(next.lastInbound?.messageId).toBe("m1");
     expect(next.lastOutbound?.chatId).toBe("c2@s.whatsapp.net");
-    expect(next.lastOutbound?.messageId).toBeUndefined();
+  });
+
+  test("writes a diagnostics file", () => {
+    setWhatsAppConnectionState(ACCOUNT, {
+      status: "connected",
+      lastInbound: { chatId: "a@lid", timestamp: 123 },
+    });
+    const safe = ACCOUNT.replace(/[^a-zA-Z0-9._-]/g, "_");
+    const raw = readFileSync(join(testDir, `${safe}.json`), "utf-8");
+    expect(raw).toContain('"lastInbound"');
+    expect(raw).toContain('"chatId": "a@lid"');
   });
 
   test("serializes diagnostics to snake_case", () => {

@@ -1,3 +1,7 @@
+import { mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { join } from "node:path";
+import { getChannelDir } from "@/channels/config";
+
 export type WhatsAppConnectionStatus =
   | "idle"
   | "qr"
@@ -31,15 +35,56 @@ type Listener = (accountId: string, state: WhatsAppConnectionState) => void;
 const states = new Map<string, WhatsAppConnectionState>();
 const listeners = new Set<Listener>();
 
+let diagnosticsDirOverride: string | null = null;
+
+function diagnosticsDir(): string {
+  if (diagnosticsDirOverride) return diagnosticsDirOverride;
+  return join(getChannelDir("whatsapp"), "diagnostics");
+}
+
+function diagnosticsPath(accountId: string): string {
+  const safe = accountId.replace(/[^a-zA-Z0-9._-]/g, "_");
+  return join(diagnosticsDir(), `${safe}.json`);
+}
+
+function loadPersistedState(
+  accountId: string,
+): Partial<WhatsAppConnectionState> {
+  try {
+    const path = diagnosticsPath(accountId);
+    const raw = readFileSync(path, "utf-8");
+    const parsed = JSON.parse(raw) as Partial<WhatsAppConnectionState>;
+    return parsed && typeof parsed === "object" ? parsed : {};
+  } catch {
+    return {};
+  }
+}
+
+function persistState(accountId: string, state: WhatsAppConnectionState): void {
+  try {
+    mkdirSync(diagnosticsDir(), { recursive: true });
+    writeFileSync(
+      diagnosticsPath(accountId),
+      `${JSON.stringify(state, null, 2)}\n`,
+      "utf-8",
+    );
+  } catch {
+    // best effort persistence
+  }
+}
+
 export function getWhatsAppConnectionState(
   accountId: string,
 ): WhatsAppConnectionState {
-  return (
-    states.get(accountId) ?? {
-      status: "idle",
-      updatedAt: new Date(0).toISOString(),
-    }
-  );
+  const existing = states.get(accountId);
+  if (existing) return existing;
+
+  const persisted = loadPersistedState(accountId);
+  return {
+    status: "idle",
+    updatedAt: new Date(0).toISOString(),
+    ...persisted,
+  };
 }
 
 export function setWhatsAppConnectionState(
@@ -57,6 +102,7 @@ export function setWhatsAppConnectionState(
     delete next.qrTerminal;
   }
   states.set(accountId, next);
+  persistState(accountId, next);
   for (const listener of listeners) {
     listener(accountId, next);
   }
@@ -65,6 +111,11 @@ export function setWhatsAppConnectionState(
 
 export function clearWhatsAppConnectionState(accountId: string): void {
   states.delete(accountId);
+  try {
+    rmSync(diagnosticsPath(accountId), { force: true });
+  } catch {
+    // best effort cleanup
+  }
 }
 
 export function subscribeWhatsAppConnectionState(
@@ -111,4 +162,8 @@ export function toWhatsAppConnectionConfig(
       : {}),
     connection_updated_at: state.updatedAt,
   };
+}
+
+export function __testSetWhatsAppDiagnosticsDir(dir: string | null): void {
+  diagnosticsDirOverride = dir;
 }
