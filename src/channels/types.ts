@@ -44,6 +44,12 @@ export interface ChannelMessageAttachment {
   imageDataBase64?: string;
   /** Best-effort speech-to-text transcription (voice memos only). */
   transcription?: string;
+  /** When the attachment was not downloaded, the reason why. */
+  downloadSkipReason?:
+    | "download_disabled"
+    | "missing_runtime_downloader"
+    | "exceeds_max_bytes"
+    | "stream_exceeds_max_bytes";
 }
 
 export interface ChannelReactionNotification {

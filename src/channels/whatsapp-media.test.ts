@@ -131,3 +131,108 @@ describe("WhatsApp media helpers", () => {
     }
   });
 });
+
+describe("collectWhatsAppAttachments — downloadSkipReason", () => {
+  const baseParams = {
+    accountId: "acct",
+    chatId: "15551234567@s.whatsapp.net",
+    messageId: "msg-skip",
+    message: {
+      imageMessage: {
+        mimetype: "image/png",
+        fileLength: 1000,
+      },
+    },
+    transcribeVoice: false,
+  };
+
+  test("download_disabled when downloadMedia is false", async () => {
+    const result = await collectWhatsAppAttachments({
+      ...baseParams,
+      downloadMedia: false,
+    });
+    expect(result.attachments).toHaveLength(1);
+    expect(result.attachments[0]?.downloadSkipReason).toBe("download_disabled");
+    expect(result.attachments[0]?.localPath).toBe("");
+  });
+
+  test("missing_runtime_downloader when downloadContentFromMessage is absent", async () => {
+    const result = await collectWhatsAppAttachments({
+      ...baseParams,
+      downloadMedia: true,
+    });
+    expect(result.attachments).toHaveLength(1);
+    expect(result.attachments[0]?.downloadSkipReason).toBe(
+      "missing_runtime_downloader",
+    );
+    expect(result.attachments[0]?.localPath).toBe("");
+  });
+
+  test("exceeds_max_bytes when fileLength exceeds cap", async () => {
+    const result = await collectWhatsAppAttachments({
+      ...baseParams,
+      downloadMedia: true,
+      downloadContentFromMessage: async () => {
+        throw new Error("should not be called");
+      },
+      mediaMaxBytes: 500,
+    });
+    expect(result.attachments).toHaveLength(1);
+    expect(result.attachments[0]?.downloadSkipReason).toBe("exceeds_max_bytes");
+    expect(result.attachments[0]?.localPath).toBe("");
+  });
+
+  test("stream_exceeds_max_bytes when stream overflows during read", async () => {
+    async function* bigStream() {
+      yield Buffer.alloc(200);
+      yield Buffer.alloc(200);
+      yield Buffer.alloc(200);
+    }
+    const result = await collectWhatsAppAttachments({
+      ...baseParams,
+      message: {
+        imageMessage: {
+          mimetype: "image/png",
+        },
+      },
+      downloadMedia: true,
+      downloadContentFromMessage: async () => bigStream(),
+      mediaMaxBytes: 400,
+    });
+    expect(result.attachments).toHaveLength(1);
+    expect(result.attachments[0]?.downloadSkipReason).toBe(
+      "stream_exceeds_max_bytes",
+    );
+    expect(result.attachments[0]?.localPath).toBe("");
+  });
+
+  test("no downloadSkipReason when download succeeds", async () => {
+    const root = await mkdtemp(join(tmpdir(), "whatsapp-media-"));
+    __testOverrideChannelsRoot(root);
+    try {
+      async function* tinyStream() {
+        yield Buffer.from("ok");
+      }
+      const result = await collectWhatsAppAttachments({
+        ...baseParams,
+        downloadMedia: true,
+        downloadContentFromMessage: async () => tinyStream(),
+        mediaMaxBytes: 1024 * 1024,
+      });
+      expect(result.attachments).toHaveLength(1);
+      expect(result.attachments[0]?.downloadSkipReason).toBeUndefined();
+      expect(result.attachments[0]?.localPath).not.toBe("");
+    } finally {
+      __testOverrideChannelsRoot(null);
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+
+  test("download_disabled takes precedence over missing downloader", async () => {
+    const result = await collectWhatsAppAttachments({
+      ...baseParams,
+      downloadMedia: false,
+    });
+    expect(result.attachments[0]?.downloadSkipReason).toBe("download_disabled");
+  });
+});

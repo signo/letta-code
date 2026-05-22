@@ -1,15 +1,22 @@
 import { randomUUID } from "node:crypto";
 import { mkdir, writeFile } from "node:fs/promises";
 import { basename, extname, join } from "node:path";
-import { getChannelDir } from "../config";
-import { transcribeAudioFile } from "../transcription";
+import { getChannelDir } from "@/channels/config";
+import { transcribeAudioFile } from "@/channels/transcription";
 import type {
   ChannelMessageAttachment,
   OutboundChannelMessage,
-} from "../types";
+} from "@/channels/types";
 import { sanitizePathSegment } from "./jid";
 
 export const DEFAULT_WHATSAPP_MEDIA_MAX_BYTES = 50 * 1024 * 1024;
+
+/** Reason an inbound attachment was not downloaded. */
+export type WhatsAppDownloadSkipReason =
+  | "download_disabled"
+  | "missing_runtime_downloader"
+  | "exceeds_max_bytes"
+  | "stream_exceeds_max_bytes";
 
 export type WhatsAppMediaKind =
   | "image"
@@ -221,16 +228,19 @@ export async function collectWhatsAppAttachments(params: {
   const isVoice =
     candidate.mediaKind === "audio" && candidate.mediaMessage.ptt === true;
   const maxBytes = params.mediaMaxBytes ?? DEFAULT_WHATSAPP_MEDIA_MAX_BYTES;
-  const shouldDownload =
-    params.downloadMedia &&
-    !!params.downloadContentFromMessage &&
-    (sizeBytes === undefined || sizeBytes <= maxBytes);
 
-  if (!shouldDownload) {
+  if (!params.downloadMedia) {
+    attachment.downloadSkipReason = "download_disabled";
     return { attachments: [attachment] };
   }
-  const downloadContentFromMessage = params.downloadContentFromMessage;
-  if (!downloadContentFromMessage) {
+
+  if (!params.downloadContentFromMessage) {
+    attachment.downloadSkipReason = "missing_runtime_downloader";
+    return { attachments: [attachment] };
+  }
+
+  if (sizeBytes !== undefined && sizeBytes > maxBytes) {
+    attachment.downloadSkipReason = "exceeds_max_bytes";
     return { attachments: [attachment] };
   }
 
@@ -242,12 +252,13 @@ export async function collectWhatsAppAttachments(params: {
   );
   await mkdir(dir, { recursive: true });
   const localPath = join(dir, `${Date.now()}-${sanitizePathSegment(name)}`);
-  const stream = await downloadContentFromMessage(
+  const stream = await params.downloadContentFromMessage(
     candidate.mediaMessage,
     candidate.mediaKind,
   );
   const buffer = await streamToBuffer(stream, maxBytes);
   if (!buffer) {
+    attachment.downloadSkipReason = "stream_exceeds_max_bytes";
     return { attachments: [attachment] };
   }
   await writeFile(localPath, buffer);
