@@ -316,13 +316,34 @@ export function buildWhatsAppOutboundPayload(
   return {
     document: { url: msg.mediaPath },
     fileName,
-    mimetype: "application/octet-stream",
+    mimetype: getWhatsAppDocumentMimeType(extension),
     ...(caption ? { caption } : {}),
   };
 }
 
 export const WHATSAPP_VOICE_MEMO_REQUIREMENT =
   "WhatsApp voice memos require an Ogg/Opus file (.ogg, .oga, or .opus). Convert MP3/M4A/WAV audio to Ogg Opus before upload.";
+
+function getWhatsAppDocumentMimeType(extension: string): string {
+  const map: Record<string, string> = {
+    ".pdf": "application/pdf",
+    ".txt": "text/plain",
+    ".csv": "text/csv",
+    ".json": "application/json",
+    ".md": "text/markdown",
+    ".doc": "application/msword",
+    ".docx":
+      "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+    ".xls": "application/vnd.ms-excel",
+    ".xlsx":
+      "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+    ".ppt": "application/vnd.ms-powerpoint",
+    ".pptx":
+      "application/vnd.openxmlformats-officedocument.presentationml.presentation",
+    ".zip": "application/zip",
+  };
+  return map[extension] ?? "application/octet-stream";
+}
 
 const WHATSAPP_IMAGE_EXTENSIONS = new Set([
   ".png",

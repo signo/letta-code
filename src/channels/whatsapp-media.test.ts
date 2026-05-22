@@ -132,6 +132,65 @@ describe("WhatsApp media helpers", () => {
   });
 });
 
+test("builds video payload for video extensions", () => {
+  expect(
+    buildWhatsAppOutboundPayload({
+      text: "clip",
+      mediaPath: "/tmp/movie.mp4",
+    }),
+  ).toEqual({ video: { url: "/tmp/movie.mp4" }, caption: "clip" });
+});
+
+test("builds document payload with extension-aware mimetype", () => {
+  expect(
+    buildWhatsAppOutboundPayload({
+      text: "",
+      mediaPath: "/tmp/report.pdf",
+      fileName: "report.pdf",
+    }),
+  ).toEqual({
+    document: { url: "/tmp/report.pdf" },
+    fileName: "report.pdf",
+    mimetype: "application/pdf",
+  });
+});
+
+test("uses text caption over title, and falls back to title", () => {
+  expect(
+    buildWhatsAppOutboundPayload({
+      text: "primary",
+      title: "fallback",
+      mediaPath: "/tmp/doc.pdf",
+    }),
+  ).toEqual(
+    expect.objectContaining({
+      caption: "primary",
+    }),
+  );
+
+  expect(
+    buildWhatsAppOutboundPayload({
+      text: "   ",
+      title: "fallback",
+      mediaPath: "/tmp/doc.pdf",
+    }),
+  ).toEqual(
+    expect.objectContaining({
+      caption: "fallback",
+    }),
+  );
+});
+
+test("fileName extension overrides mediaPath extension for type selection", () => {
+  expect(
+    buildWhatsAppOutboundPayload({
+      text: "",
+      mediaPath: "/tmp/upload.bin",
+      fileName: "photo.jpg",
+    }),
+  ).toEqual({ image: { url: "/tmp/upload.bin" } });
+});
+
 describe("collectWhatsAppAttachments — downloadSkipReason", () => {
   const baseParams = {
     accountId: "acct",
