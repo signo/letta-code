@@ -264,18 +264,27 @@ export async function collectWhatsAppAttachments(params: {
   await writeFile(localPath, buffer);
   attachment.localPath = localPath;
 
-  if (isVoice && params.transcribeVoice) {
+  // ── Transcription status ─────────────────────────────────────────────
+  if (!isVoice) {
+    attachment.transcriptionStatus = "skipped_not_voice";
+  } else if (!params.transcribeVoice) {
+    attachment.transcriptionStatus = "skipped_not_enabled";
+  } else {
     const result = await transcribeAudioFile(localPath);
     if (result.success && result.text?.trim()) {
       attachment.transcription = result.text.trim();
+      attachment.transcriptionStatus = "success";
       return {
         attachments: [attachment],
         transcriptionText: `[Voice message]: ${attachment.transcription}`,
       };
     }
-    if (result.error) {
-      attachment.transcription = `Transcription failed: ${result.error}`;
+    if (result.success && !result.text?.trim()) {
+      attachment.transcription = "[Transcription returned empty text]";
+    } else {
+      attachment.transcription = `[Transcription unavailable: ${result.error ?? "unknown error"}]`;
     }
+    attachment.transcriptionStatus = "failed";
   }
 
   return { attachments: [attachment] };

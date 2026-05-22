@@ -295,3 +295,57 @@ describe("collectWhatsAppAttachments — downloadSkipReason", () => {
     expect(result.attachments[0]?.downloadSkipReason).toBe("download_disabled");
   });
 });
+
+describe("collectWhatsAppAttachments — transcriptionStatus baseline", () => {
+  test("sets skipped_not_voice for downloaded non-voice attachments", async () => {
+    const root = await mkdtemp(join(tmpdir(), "whatsapp-media-"));
+    __testOverrideChannelsRoot(root);
+    try {
+      async function* tinyStream() {
+        yield Buffer.from("ok");
+      }
+      const result = await collectWhatsAppAttachments({
+        accountId: "acct",
+        chatId: "15551234567@s.whatsapp.net",
+        messageId: "msg-tx-1",
+        message: { imageMessage: { mimetype: "image/jpeg" } },
+        downloadContentFromMessage: async () => tinyStream(),
+        downloadMedia: true,
+        transcribeVoice: true,
+      });
+      expect(result.attachments[0]?.transcriptionStatus).toBe(
+        "skipped_not_voice",
+      );
+    } finally {
+      __testOverrideChannelsRoot(null);
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+
+  test("sets skipped_not_enabled for downloaded voice attachments when transcription disabled", async () => {
+    const root = await mkdtemp(join(tmpdir(), "whatsapp-media-"));
+    __testOverrideChannelsRoot(root);
+    try {
+      async function* tinyStream() {
+        yield Buffer.from("ok");
+      }
+      const result = await collectWhatsAppAttachments({
+        accountId: "acct",
+        chatId: "15551234567@s.whatsapp.net",
+        messageId: "msg-tx-2",
+        message: {
+          audioMessage: { mimetype: "audio/ogg; codecs=opus", ptt: true },
+        },
+        downloadContentFromMessage: async () => tinyStream(),
+        downloadMedia: true,
+        transcribeVoice: false,
+      });
+      expect(result.attachments[0]?.transcriptionStatus).toBe(
+        "skipped_not_enabled",
+      );
+    } finally {
+      __testOverrideChannelsRoot(null);
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+});

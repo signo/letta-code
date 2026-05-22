@@ -44,6 +44,12 @@ export interface ChannelMessageAttachment {
   imageDataBase64?: string;
   /** Best-effort speech-to-text transcription (voice memos only). */
   transcription?: string;
+  /** Machine-readable outcome of voice transcription. */
+  transcriptionStatus?:
+    | "success"
+    | "failed"
+    | "skipped_not_enabled"
+    | "skipped_not_voice";
   /** When the attachment was not downloaded, the reason why. */
   downloadSkipReason?:
     | "download_disabled"
