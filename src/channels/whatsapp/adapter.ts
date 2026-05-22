@@ -288,6 +288,7 @@ export function createWhatsAppAdapter(
         setWhatsAppConnectionState(account.accountId, {
           status: "error",
           lastError: message,
+          lastErrorAt: new Date().toISOString(),
         });
         scheduleReconnect(message);
       });
@@ -333,6 +334,7 @@ export function createWhatsAppAdapter(
             setWhatsAppConnectionState(account.accountId, {
               status: "error",
               lastError: `${message}. Another WhatsApp client is using this linked-device session; not reconnecting automatically.`,
+              lastErrorAt: new Date().toISOString(),
             });
             console.warn(
               `[WhatsApp:${account.accountId}] disconnected due to session conflict; not reconnecting automatically. Stop any other WhatsApp server using this account/auth session, then restart this server.`,
@@ -515,6 +517,14 @@ export function createWhatsAppAdapter(
       console.log(
         `[WhatsApp:${account.accountId}] inbound chatId=${chatId} sender=${senderId} text="${preview(body)}"`,
       );
+      setWhatsAppConnectionState(account.accountId, {
+        status: "connected",
+        lastInbound: {
+          chatId,
+          messageId: messageId || undefined,
+          timestamp,
+        },
+      });
       await adapter.onMessage?.(inbound);
     }
   }
@@ -590,6 +600,14 @@ export function createWhatsAppAdapter(
         });
         const id = result.key?.id ?? target;
         rememberSent(id, result);
+        setWhatsAppConnectionState(account.accountId, {
+          status: "connected",
+          lastOutbound: {
+            chatId: msg.chatId,
+            messageId: id || undefined,
+            timestamp: Date.now(),
+          },
+        });
         return { messageId: id };
       }
       try {
@@ -605,6 +623,14 @@ export function createWhatsAppAdapter(
       );
       const id = result.key?.id ?? "";
       rememberSent(id, result);
+      setWhatsAppConnectionState(account.accountId, {
+        status: "connected",
+        lastOutbound: {
+          chatId: msg.chatId,
+          messageId: id || undefined,
+          timestamp: Date.now(),
+        },
+      });
       return { messageId: id };
     },
 
@@ -622,7 +648,16 @@ export function createWhatsAppAdapter(
         { text },
         buildQuotedOptions(targetJid, options?.replyToMessageId),
       );
-      rememberSent(result.key?.id ?? "", result);
+      const outId = result.key?.id ?? "";
+      rememberSent(outId, result);
+      setWhatsAppConnectionState(account.accountId, {
+        status: "connected",
+        lastOutbound: {
+          chatId,
+          messageId: outId || undefined,
+          timestamp: Date.now(),
+        },
+      });
     },
 
     async handleControlRequestEvent(event: ChannelControlRequestEvent) {

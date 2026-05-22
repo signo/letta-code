@@ -374,6 +374,7 @@ export async function createWhatsAppSocket(params: {
             (statusCode
               ? `Connection closed (${statusCode})`
               : "Connection closed"),
+          lastErrorAt: new Date().toISOString(),
         });
       }
     });

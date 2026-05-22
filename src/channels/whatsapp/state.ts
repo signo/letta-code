@@ -7,6 +7,12 @@ export type WhatsAppConnectionStatus =
   | "logged_out"
   | "error";
 
+export interface WhatsAppMessageDiagnostic {
+  chatId: string;
+  messageId?: string;
+  timestamp: number;
+}
+
 export interface WhatsAppConnectionState {
   status: WhatsAppConnectionStatus;
   qr?: string;
@@ -14,6 +20,9 @@ export interface WhatsAppConnectionState {
   phoneJid?: string;
   lid?: string;
   lastError?: string;
+  lastErrorAt?: string;
+  lastInbound?: WhatsAppMessageDiagnostic;
+  lastOutbound?: WhatsAppMessageDiagnostic;
   updatedAt: string;
 }
 
@@ -77,6 +86,29 @@ export function toWhatsAppConnectionConfig(
     ...(state.phoneJid ? { phone_jid: state.phoneJid } : {}),
     ...(state.lid ? { lid: state.lid } : {}),
     ...(state.lastError ? { last_error: state.lastError } : {}),
+    ...(state.lastErrorAt ? { last_error_at: state.lastErrorAt } : {}),
+    ...(state.lastInbound
+      ? {
+          last_inbound: {
+            chat_id: state.lastInbound.chatId,
+            ...(state.lastInbound.messageId
+              ? { message_id: state.lastInbound.messageId }
+              : {}),
+            timestamp: state.lastInbound.timestamp,
+          },
+        }
+      : {}),
+    ...(state.lastOutbound
+      ? {
+          last_outbound: {
+            chat_id: state.lastOutbound.chatId,
+            ...(state.lastOutbound.messageId
+              ? { message_id: state.lastOutbound.messageId }
+              : {}),
+            timestamp: state.lastOutbound.timestamp,
+          },
+        }
+      : {}),
     connection_updated_at: state.updatedAt,
   };
 }

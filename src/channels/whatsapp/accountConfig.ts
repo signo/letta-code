@@ -1,5 +1,9 @@
-import type { ChannelAccountConfigAdapter } from "../pluginTypes";
-import type { WhatsAppChannelAccount, WhatsAppGroupMode } from "../types";
+import type { ChannelAccountConfigAdapter } from "@/channels/pluginTypes";
+import { getRoutesForChannel, loadRoutes } from "@/channels/routing";
+import type {
+  WhatsAppChannelAccount,
+  WhatsAppGroupMode,
+} from "@/channels/types";
 import { toWhatsAppConnectionConfig } from "./state";
 
 const WHATSAPP_CONFIG_KEYS = new Set([
@@ -35,6 +39,21 @@ function isPositiveNumber(value: unknown): value is number {
   return typeof value === "number" && Number.isFinite(value) && value > 0;
 }
 
+function buildWhatsAppRouteSummary(accountId: string): Record<string, unknown> {
+  loadRoutes("whatsapp");
+  const routes = getRoutesForChannel("whatsapp", accountId);
+  return {
+    route_count: routes.length,
+    routes: routes.slice(0, 10).map((route) => ({
+      chat_id: route.chatId,
+      chat_type: route.chatType ?? "direct",
+      thread_id: route.threadId ?? null,
+      agent_id: route.agentId,
+      conversation_id: route.conversationId,
+      enabled: route.enabled !== false,
+    })),
+  };
+}
 export const whatsappAccountConfigAdapter: ChannelAccountConfigAdapter<WhatsAppChannelAccount> =
   {
     isValidConfig(config) {
@@ -100,6 +119,7 @@ export const whatsappAccountConfigAdapter: ChannelAccountConfigAdapter<WhatsAppC
         transcribe_voice: account.transcribeVoice === true,
         download_media: account.downloadMedia === true,
         media_max_bytes: account.mediaMaxBytes,
+        route_summary: buildWhatsAppRouteSummary(account.accountId),
         ...toWhatsAppConnectionConfig(account.accountId),
       };
     },
@@ -114,6 +134,7 @@ export const whatsappAccountConfigAdapter: ChannelAccountConfigAdapter<WhatsAppC
         transcribe_voice: account.transcribeVoice === true,
         download_media: account.downloadMedia === true,
         media_max_bytes: account.mediaMaxBytes,
+        route_summary: buildWhatsAppRouteSummary(account.accountId),
         ...toWhatsAppConnectionConfig(account.accountId),
       };
     },

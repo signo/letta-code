@@ -25,6 +25,10 @@ import {
   __testOverrideSaveTargetStore,
   clearTargetStores,
 } from "@/channels/targets";
+import {
+  clearWhatsAppConnectionState,
+  setWhatsAppConnectionState,
+} from "@/channels/whatsapp/state";
 
 describe("WhatsApp channel service", () => {
   beforeEach(() => {
@@ -32,6 +36,7 @@ describe("WhatsApp channel service", () => {
     clearAllRoutes();
     clearPairingStores();
     clearTargetStores();
+    clearWhatsAppConnectionState("personal");
     __testOverrideLoadChannelAccounts(() => []);
     __testOverrideSaveChannelAccounts(() => {});
     __testOverrideLoadRoutes(() => null);
@@ -47,6 +52,7 @@ describe("WhatsApp channel service", () => {
     clearAllRoutes();
     clearPairingStores();
     clearTargetStores();
+    clearWhatsAppConnectionState("personal");
     __testOverrideLoadChannelAccounts(null);
     __testOverrideSaveChannelAccounts(null);
     __testOverrideLoadRoutes(null);
@@ -132,6 +138,42 @@ describe("WhatsApp channel service", () => {
       expect.objectContaining({
         agentId: "agent-bound",
         config: expect.objectContaining({ agent_id: "agent-bound" }),
+      }),
+    );
+  });
+
+  test("config snapshot includes route_summary and diagnostics fields", () => {
+    createChannelAccountLive("whatsapp", {}, { accountId: "personal" });
+
+    setWhatsAppConnectionState("personal", {
+      status: "connected",
+      lastError: "sample",
+      lastErrorAt: "2026-05-22T10:00:00.000Z",
+      lastInbound: { chatId: "in@lid", messageId: "in-1", timestamp: 111 },
+      lastOutbound: { chatId: "out@s.whatsapp.net", timestamp: 222 },
+    });
+
+    const updated = updateChannelAccountLive("whatsapp", "personal", {
+      enabled: true,
+      agentId: "agent-1",
+      dmPolicy: "open",
+    });
+
+    expect(updated.config).toEqual(
+      expect.objectContaining({
+        connection_status: "connected",
+        last_error: "sample",
+        last_error_at: "2026-05-22T10:00:00.000Z",
+        last_inbound: {
+          chat_id: "in@lid",
+          message_id: "in-1",
+          timestamp: 111,
+        },
+        last_outbound: {
+          chat_id: "out@s.whatsapp.net",
+          timestamp: 222,
+        },
+        route_summary: expect.objectContaining({ route_count: 0, routes: [] }),
       }),
     );
   });
