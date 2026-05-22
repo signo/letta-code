@@ -865,12 +865,22 @@ export async function message_channel(
       return `Error: Action "${request.action}" is not supported on ${request.channel}.`;
     }
 
-    return await plugin.messageActions.handleAction({
+    console.log(
+      `[MessageChannel] dispatch channel=${request.channel} action=${request.action} chatId=${request.chatId} accountId=${route.accountId ?? "none"} agent=${route.agentId} conv=${route.conversationId}`,
+    );
+
+    const result = await plugin.messageActions.handleAction({
       request,
       route,
       adapter,
       formatText: (text) => formatOutboundChannelMessage(request.channel, text),
     });
+    console.log(
+      `[MessageChannel] done channel=${request.channel} action=${request.action} chatId=${request.chatId} result=${String(
+        result,
+      ).slice(0, 120)}`,
+    );
+    return result;
   } catch (err) {
     const msg = err instanceof Error ? err.message : "unknown error";
     return `Error sending message to ${input.channel}: ${msg}`;
