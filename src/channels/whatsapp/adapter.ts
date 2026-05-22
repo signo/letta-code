@@ -1,3 +1,5 @@
+import { stat } from "node:fs/promises";
+import { isAbsolute, relative, resolve, sep } from "node:path";
 import { formatChannelControlRequestPrompt } from "@/channels/interactive";
 import { getRoute } from "@/channels/routing";
 import type {
@@ -190,6 +192,38 @@ export function createWhatsAppAdapter(
     return prefix.length > MAX_MESSAGE_PREFIX_LENGTH
       ? prefix.slice(0, MAX_MESSAGE_PREFIX_LENGTH)
       : prefix;
+  }
+
+  async function resolveAutoAttachment(
+    msg: OutboundChannelMessage,
+  ): Promise<OutboundChannelMessage> {
+    if (msg.mediaPath?.trim()) return msg;
+    const attachDir = account.attachDir?.trim();
+    if (!attachDir) return msg;
+    const text = msg.text?.trim() ?? "";
+    if (!text) return msg;
+
+    const firstToken = text.split(/\s+/)[0] ?? "";
+    if (!isAbsolute(firstToken)) return msg;
+
+    const candidate = resolve(firstToken);
+    const base = resolve(attachDir);
+    const rel = relative(base, candidate);
+    const inBase = rel === "" || (!rel.startsWith("..") && !isAbsolute(rel));
+    if (!inBase) return msg;
+    if (!account.attachRecursive && rel.includes(sep)) return msg;
+
+    try {
+      const fileInfo = await stat(candidate);
+      if (!fileInfo.isFile()) return msg;
+    } catch {
+      return msg;
+    }
+
+    return {
+      ...msg,
+      mediaPath: candidate,
+    };
   }
 
   async function setTyping(chatId: string, typing: boolean): Promise<void> {
@@ -624,6 +658,7 @@ export function createWhatsAppAdapter(
       if (!msg.text?.trim() && !msg.mediaPath?.trim() && !msg.reaction) {
         throw new Error("WhatsApp send requires message or media.");
       }
+      msg = await resolveAutoAttachment(msg);
       const prefix = getRouteMessagePrefix(msg.chatId);
       if (prefix && msg.text) {
         msg = { ...msg, text: prefix + " " + msg.text };
