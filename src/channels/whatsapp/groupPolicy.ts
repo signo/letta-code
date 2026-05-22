@@ -94,3 +94,13 @@ function matchesSelf(
     (!!selfLid && normalized === stripDeviceSuffix(selfLid))
   );
 }
+
+export const GROUP_DROP_HINTS: Record<
+  "group_disabled" | "group_not_allowed" | "no_mention_signal",
+  string
+> = {
+  group_disabled: "group mode is disabled",
+  group_not_allowed: "group not in allowedGroups",
+  no_mention_signal:
+    "mention mode active but no mention/reply/pattern signal found",
+};

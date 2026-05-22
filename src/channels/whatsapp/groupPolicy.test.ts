@@ -1,6 +1,9 @@
 import { describe, expect, test } from "bun:test";
 import type { GroupEligibilityInput } from "@/channels/whatsapp/groupPolicy";
-import { checkGroupEligibility } from "@/channels/whatsapp/groupPolicy";
+import {
+  checkGroupEligibility,
+  GROUP_DROP_HINTS,
+} from "@/channels/whatsapp/groupPolicy";
 
 const SELF_PHONE = "15551112222@s.whatsapp.net";
 const SELF_LID = "210565536456917@lid";
@@ -83,5 +86,20 @@ describe("checkGroupEligibility", () => {
       selfLid: null,
     });
     expect(result).toEqual({ eligible: true });
+  });
+
+  test("mention mode allows reply-to-self signal", () => {
+    const result = checkGroupEligibility({
+      ...baseInput,
+      groupMode: "mention",
+      replyParticipant: SELF_LID,
+    });
+    expect(result).toEqual({ eligible: true });
+  });
+
+  test("drop hints map contains all reasons", () => {
+    expect(GROUP_DROP_HINTS.group_disabled).toBeTruthy();
+    expect(GROUP_DROP_HINTS.group_not_allowed).toBeTruthy();
+    expect(GROUP_DROP_HINTS.no_mention_signal).toBeTruthy();
   });
 });

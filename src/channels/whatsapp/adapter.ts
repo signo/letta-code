@@ -8,7 +8,7 @@ import type {
   WhatsAppChannelAccount,
 } from "@/channels/types";
 import type { BaileysSocketLike } from "./baileysCompat";
-import { checkGroupEligibility } from "./groupPolicy";
+import { checkGroupEligibility, GROUP_DROP_HINTS } from "./groupPolicy";
 import {
   isGroupJid,
   isLidJid,
@@ -473,8 +473,8 @@ export function createWhatsAppAdapter(
 
       const mentionedJids = extractMentionedJids(msg.message);
       const replyParticipant = extractReplyParticipant(msg.message);
-      const groupAllowed = !group
-        ? true
+      const groupResult = !group
+        ? ({ eligible: true } as const)
         : checkGroupEligibility({
             groupMode: account.groupMode,
             allowedGroups: account.allowedGroups,
@@ -485,8 +485,13 @@ export function createWhatsAppAdapter(
             replyParticipant,
             selfPhoneJid,
             selfLid,
-          }).eligible;
-      if (!groupAllowed) continue;
+          });
+      if (!groupResult.eligible) {
+        console.log(
+          `[WhatsApp:${account.accountId}] drop group msg chatId=${chatId}: ${GROUP_DROP_HINTS[groupResult.reason]}`,
+        );
+        continue;
+      }
 
       const chatLabel = group
         ? await getGroupLabel(chatId)
