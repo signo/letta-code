@@ -41,6 +41,7 @@ const RECONNECT_MAX_MS = 30_000;
 const WATCHDOG_INTERVAL_MS = 5 * 60 * 1000;
 const TYPING_PRESENCE = "composing";
 const IDLE_PRESENCE = "paused";
+const ATTACH_TAG_RE = /\[attach:([^\]]+)\]/i;
 
 type EventEmitterLike = {
   on?: (event: string, handler: (payload: unknown) => void) => void;
@@ -203,25 +204,55 @@ export function createWhatsAppAdapter(
     const text = msg.text?.trim() ?? "";
     if (!text) return msg;
 
-    const firstToken = text.split(/\s+/)[0] ?? "";
-    if (!isAbsolute(firstToken)) return msg;
+    const match = text.match(ATTACH_TAG_RE);
+    if (!match) return msg;
 
-    const candidate = resolve(firstToken);
+    const rawPath = (match[1] ?? "").trim();
+    if (!rawPath) return msg;
+    const fileLabel = rawPath.split(/[\\/]/).pop() || "file";
+    if (!isAbsolute(rawPath)) {
+      return {
+        ...msg,
+        text: text.replace(ATTACH_TAG_RE, `[error:${fileLabel}]`),
+      };
+    }
+
+    const candidate = resolve(rawPath);
     const base = resolve(attachDir);
     const rel = relative(base, candidate);
     const inBase = rel === "" || (!rel.startsWith("..") && !isAbsolute(rel));
-    if (!inBase) return msg;
-    if (!account.attachRecursive && rel.includes(sep)) return msg;
+    if (!inBase) {
+      return {
+        ...msg,
+        text: text.replace(ATTACH_TAG_RE, `[error:${fileLabel}]`),
+      };
+    }
+    if (!account.attachRecursive && rel.includes(sep)) {
+      return {
+        ...msg,
+        text: text.replace(ATTACH_TAG_RE, `[error:${fileLabel}]`),
+      };
+    }
 
     try {
       const fileInfo = await stat(candidate);
-      if (!fileInfo.isFile()) return msg;
+      if (!fileInfo.isFile()) {
+        return {
+          ...msg,
+          text: text.replace(ATTACH_TAG_RE, `[error:${fileLabel}]`),
+        };
+      }
     } catch {
-      return msg;
+      return {
+        ...msg,
+        text: text.replace(ATTACH_TAG_RE, `[error:${fileLabel}]`),
+      };
     }
 
+    const cleanedText = text.replace(ATTACH_TAG_RE, "").trim();
     return {
       ...msg,
+      text: cleanedText,
       mediaPath: candidate,
     };
   }
