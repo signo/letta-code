@@ -323,3 +323,142 @@ export function removeRoutesForAccount(
 export function clearAllRoutes(): void {
   routesByKey.clear();
 }
+
+/**
+ * Update a route's conversationId in memory and persist to disk.
+ * Returns true if the route was found and updated.
+ */
+export function updateRouteConversationId(
+  channelId: string,
+  chatId: string,
+  accountId: string | undefined,
+  threadId: string | null | undefined,
+  newConversationId: string,
+): boolean {
+  const key = routeKey(channelId, chatId, accountId, threadId);
+  const existing = routesByKey.get(key);
+  if (!existing) return false;
+  routesByKey.set(key, {
+    ...existing,
+    conversationId: newConversationId,
+    updatedAt: new Date().toISOString(),
+  });
+  saveRoutes(channelId);
+  return true;
+}
+
+/**
+ * Verify that every route's conversation exists on the Letta server.
+ * For routes whose conversation is missing, create a replacement and
+ * update the route. Returns a summary of replacements.
+ *
+ * This is Layer 2 (startup reconciliation) — proactive, before first message.
+ */
+export async function reconcileRoutesAgainstServer(options: {
+  backend: {
+    retrieveConversation: (
+      conversationId: string,
+    ) => Promise<{ id?: string | null } | null>;
+    createConversation: (body: {
+      agent_id: string;
+    }) => Promise<{ id?: string | null }>;
+  };
+  supportedChannelIds: string[];
+}): Promise<{
+  checked: number;
+  replaced: number;
+  failed: number;
+  details: Array<{
+    channelId: string;
+    chatId: string;
+    agentId: string;
+    oldConversationId: string;
+    newConversationId: string;
+  }>;
+}> {
+  const result = {
+    checked: 0,
+    replaced: 0,
+    failed: 0,
+    details: [] as Array<{
+      channelId: string;
+      chatId: string;
+      agentId: string;
+      oldConversationId: string;
+      newConversationId: string;
+    }>,
+  };
+
+  for (const channelId of options.supportedChannelIds) {
+    loadRoutes(channelId);
+    const routes = getRoutesForChannel(channelId);
+    for (const route of routes) {
+      if (!route.enabled || !route.agentId || !route.conversationId) continue;
+      result.checked++;
+
+      let conversationExists = false;
+      try {
+        const conv = await options.backend.retrieveConversation(
+          route.conversationId,
+        );
+        conversationExists = conv?.id != null;
+      } catch {
+        conversationExists = false;
+      }
+
+      if (conversationExists) continue;
+
+      console.log(
+        `[Channels] conversation not found: conv=${route.conversationId} agent=${route.agentId} — creating replacement`,
+      );
+
+      try {
+        const newConv = await options.backend.createConversation({
+          agent_id: route.agentId,
+        });
+        const newId = newConv?.id;
+        if (!newId) {
+          console.warn(
+            `[Channels] failed to create replacement conversation for agent=${route.agentId}`,
+          );
+          result.failed++;
+          continue;
+        }
+
+        const updated = updateRouteConversationId(
+          channelId,
+          route.chatId,
+          route.accountId,
+          route.threadId,
+          newId,
+        );
+
+        if (updated) {
+          console.log(
+            `[Channels] route updated: chatId=${route.chatId} old_conv=${route.conversationId} new_conv=${newId}`,
+          );
+          result.replaced++;
+          result.details.push({
+            channelId,
+            chatId: route.chatId,
+            agentId: route.agentId,
+            oldConversationId: route.conversationId,
+            newConversationId: newId,
+          });
+        } else {
+          console.warn(
+            `[Channels] route not found in memory for chatId=${route.chatId} — cannot update`,
+          );
+          result.failed++;
+        }
+      } catch (error) {
+        console.warn(
+          `[Channels] error creating replacement conversation for agent=${route.agentId}: ${error instanceof Error ? error.message : String(error)}`,
+        );
+        result.failed++;
+      }
+    }
+  }
+
+  return result;
+}

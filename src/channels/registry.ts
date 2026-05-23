@@ -1453,6 +1453,33 @@ export async function initializeChannels(
     }
   }
 
+  // Layer 2: startup reconciliation — verify route conversations exist
+  try {
+    const { getBackend } = await import("@/backend");
+    const { getSupportedChannelIds } = await import(
+      "@/channels/pluginRegistry"
+    );
+    const { reconcileRoutesAgainstServer } = await import("@/channels/routing");
+    const backend = getBackend();
+    const supportedIds = getSupportedChannelIds();
+    console.log(
+      `[Channels] startup reconcile: verifying routes for ${supportedIds.length} channels`,
+    );
+    const reconcileResult = await reconcileRoutesAgainstServer({
+      backend,
+      supportedChannelIds: supportedIds,
+    });
+    if (reconcileResult.replaced > 0 || reconcileResult.failed > 0) {
+      console.log(
+        `[Channels] startup reconcile: checked=${reconcileResult.checked} replaced=${reconcileResult.replaced} failed=${reconcileResult.failed}`,
+      );
+    }
+  } catch (error) {
+    console.warn(
+      `[Channels] startup reconcile failed (non-fatal): ${error instanceof Error ? error.message : String(error)}`,
+    );
+  }
+
   return registry;
 }
 
