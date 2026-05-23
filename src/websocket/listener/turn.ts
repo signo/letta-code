@@ -787,9 +787,6 @@ export async function handleIncomingMessage(
 
       if (stopReason === "end_turn") {
         const sources = runtime.activeChannelTurnSources ?? [];
-        console.log(
-          `[Channels] end_turn summary sources=${sources.length} sawMessageChannelCall=${sawMessageChannelCall} assistantTextLen=${buffers.lastAssistantMessage?.trim()?.length ?? 0}`,
-        );
         if (
           sources.length > 0 &&
           !sawMessageChannelCall &&
