@@ -598,13 +598,11 @@ export async function handleIncomingMessage(
       ...queuedInterruptedToolCallIds,
     ];
     const routedChannelTurn = (msg.channelTurnSources?.length ?? 0) > 0;
-    const enforcedClientToolAllowlist = routedChannelTurn
-      ? ["MessageChannel"]
-      : msg.clientToolAllowlist;
+    const enforcedClientToolAllowlist = msg.clientToolAllowlist;
 
     if (routedChannelTurn) {
       console.log(
-        `[Channels] routed turn: agent=${agentId} conv=${conversationId} allowlist=${JSON.stringify(enforcedClientToolAllowlist)} sources=${msg.channelTurnSources!.map((s) => `${s.channel}:${s.chatId}`).join(",")}`,
+        `[Channels] routed turn: agent=${agentId} conv=${conversationId} sources=${msg.channelTurnSources!.map((s) => `${s.channel}:${s.chatId}`).join(",")}`,
       );
     }
 
@@ -621,11 +619,6 @@ export async function handleIncomingMessage(
     runtime.currentLoadedTools =
       preparedToolContext.preparedToolContext.loadedToolNames;
 
-    if (routedChannelTurn) {
-      console.log(
-        `[Channels] loaded tools: ${JSON.stringify(runtime.currentLoadedTools)}`,
-      );
-    }
     const buildSendOptions = (): Parameters<typeof sendMessageStream>[2] => ({
       agentId,
       streamTokens: true,
@@ -844,20 +837,6 @@ export async function handleIncomingMessage(
             }
           }
 
-          if ((msg.channelTurnSources?.length ?? 0) > 0) {
-            const toolCallChunk = chunk as {
-              message_type?: unknown;
-              name?: unknown;
-            };
-            if (toolCallChunk.message_type === "tool_call_message") {
-              const toolName =
-                typeof toolCallChunk.name === "string"
-                  ? toolCallChunk.name
-                  : "(unknown)";
-              console.log(`[Channels] routed tool_call: ${toolName}`);
-            }
-          }
-
           if (shouldOutput) {
             const normalizedChunk = normalizeToolReturnWireMessage(
               chunk as unknown as Record<string, unknown>,
@@ -898,11 +877,6 @@ export async function handleIncomingMessage(
       }
 
       if (stopReason === "end_turn") {
-        if (routedChannelTurn) {
-          console.log(
-            `[Channels] end_turn on routed turn — agent=${agentId} conv=${conversationId} (no MessageChannel tool call was emitted)`,
-          );
-        }
         try {
           const transcriptLines = toLines(buffers);
           if (transcriptLines.length > 0) {
