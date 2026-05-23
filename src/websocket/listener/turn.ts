@@ -741,6 +741,20 @@ export async function handleIncomingMessage(
             }
           }
 
+          if ((msg.channelTurnSources?.length ?? 0) > 0) {
+            const toolCallChunk = chunk as {
+              message_type?: unknown;
+              name?: unknown;
+            };
+            if (toolCallChunk.message_type === "tool_call_message") {
+              const toolName =
+                typeof toolCallChunk.name === "string"
+                  ? toolCallChunk.name
+                  : "(unknown)";
+              console.log(`[Channels] routed tool_call: ${toolName}`);
+            }
+          }
+
           if (shouldOutput) {
             const normalizedChunk = normalizeToolReturnWireMessage(
               chunk as unknown as Record<string, unknown>,
