@@ -602,6 +602,12 @@ export async function handleIncomingMessage(
       ? ["MessageChannel"]
       : msg.clientToolAllowlist;
 
+    if (routedChannelTurn) {
+      console.log(
+        `[Channels] routed turn: agent=${agentId} conv=${conversationId} allowlist=${JSON.stringify(enforcedClientToolAllowlist)} sources=${msg.channelTurnSources!.map((s) => `${s.channel}:${s.chatId}`).join(",")}`,
+      );
+    }
+
     const preparedToolContext = await prepareToolExecutionContextForScope({
       agentId,
       conversationId,
@@ -614,6 +620,12 @@ export async function handleIncomingMessage(
     runtime.currentToolsetPreference = preparedToolContext.toolsetPreference;
     runtime.currentLoadedTools =
       preparedToolContext.preparedToolContext.loadedToolNames;
+
+    if (routedChannelTurn) {
+      console.log(
+        `[Channels] loaded tools: ${JSON.stringify(runtime.currentLoadedTools)}`,
+      );
+    }
     const buildSendOptions = (): Parameters<typeof sendMessageStream>[2] => ({
       agentId,
       streamTokens: true,
@@ -795,6 +807,11 @@ export async function handleIncomingMessage(
       }
 
       if (stopReason === "end_turn") {
+        if (routedChannelTurn) {
+          console.log(
+            `[Channels] end_turn on routed turn — agent=${agentId} conv=${conversationId} (no MessageChannel tool call was emitted)`,
+          );
+        }
         try {
           const transcriptLines = toLines(buffers);
           if (transcriptLines.length > 0) {
