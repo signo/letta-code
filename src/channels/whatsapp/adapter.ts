@@ -648,9 +648,6 @@ export function createWhatsAppAdapter(
       lidToJid,
       sock,
     });
-    console.log(
-      `[WhatsApp:${account.accountId}] sendToWhatsApp chatId=${chatId} targetJid=${targetJid} payloadKeys=${Object.keys(payload).join(",")}`,
-    );
     return await sock.sendMessage(targetJid, payload, options);
   }
 
@@ -693,9 +690,6 @@ export function createWhatsAppAdapter(
         throw new Error("WhatsApp send requires message or media.");
       }
       msg = await resolveAutoAttachment(msg);
-      console.log(
-        `[WhatsApp:${account.accountId}] adapter.sendMessage chatId=${msg.chatId} hasMedia=${Boolean(msg.mediaPath)} textLen=${msg.text?.length ?? 0}`,
-      );
       const prefix = getRouteMessagePrefix(msg.chatId);
       if (prefix && msg.text) {
         msg = { ...msg, text: prefix + " " + msg.text };
