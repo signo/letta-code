@@ -597,10 +597,15 @@ export async function handleIncomingMessage(
     let pendingNormalizationInterruptedToolCallIds = [
       ...queuedInterruptedToolCallIds,
     ];
+    const routedChannelTurn = (msg.channelTurnSources?.length ?? 0) > 0;
+    const enforcedClientToolAllowlist = routedChannelTurn
+      ? ["MessageChannel"]
+      : msg.clientToolAllowlist;
+
     const preparedToolContext = await prepareToolExecutionContextForScope({
       agentId,
       conversationId,
-      clientToolAllowlist: msg.clientToolAllowlist,
+      clientToolAllowlist: enforcedClientToolAllowlist,
       workingDirectory: turnWorkingDirectory,
       permissionModeState: turnPermissionModeState,
       cachedAgent,
