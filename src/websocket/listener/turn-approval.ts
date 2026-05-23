@@ -128,7 +128,10 @@ export function shouldAutoApproveChannelMessageTool(params: {
   toolName: string;
   toolArgs?: string;
 }): boolean {
-  if (params.toolName !== "MessageChannel") {
+  if (
+    params.toolName !== "MessageChannel" &&
+    params.toolName !== "message_channel"
+  ) {
     return false;
   }
 
@@ -274,6 +277,12 @@ export async function handleApprovalStop(params: {
   clearPendingApprovalBatchIds(runtime, approvals);
   rememberPendingApprovalBatchIds(runtime, approvals, dequeuedBatchId);
 
+  if (approvals.length > 0) {
+    console.log(
+      `[Channels] approval names: ${approvals.map((a) => `${a.toolName}(${String(a.toolArgs).slice(0, 80)})`).join(", ")}`,
+    );
+  }
+
   const channelAutoAllowed = approvals.filter((approval) =>
     shouldAutoApproveChannelMessageTool({
       runtime,
@@ -281,6 +290,11 @@ export async function handleApprovalStop(params: {
       toolArgs: approval.toolArgs,
     }),
   );
+  if (channelAutoAllowed.length > 0) {
+    console.log(
+      `[Channels] auto-allowed ${channelAutoAllowed.length} channel tool calls`,
+    );
+  }
   const approvalsForClassification = approvals.filter(
     (approval) => !channelAutoAllowed.includes(approval),
   );
