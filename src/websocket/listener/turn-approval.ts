@@ -296,6 +296,8 @@ export async function handleApprovalStop(params: {
       agentId,
     });
 
+  const routedChannelSource = resolveChannelApprovalSource(runtime);
+
   let pendingNeedsUserInput = [...needsUserInput];
   let lastNeedsUserInputToolCallIds = pendingNeedsUserInput.map(
     (ac) => ac.approval.toolCallId,
@@ -346,6 +348,32 @@ export async function handleApprovalStop(params: {
       reason: formatPermissionDenial(ac.permission, ac.denyReason),
     })),
   ];
+
+  if (routedChannelSource && pendingNeedsUserInput.length > 0) {
+    const autoDeniedForChannel = pendingNeedsUserInput
+      .filter((ac) => ac.approval.toolName !== "MessageChannel")
+      .map((ac) => ({
+        type: "deny" as const,
+        approval: ac.approval,
+        reason:
+          "Auto-denied during routed channel turn: interactive/non-MessageChannel approval is not supported.",
+      }));
+    if (autoDeniedForChannel.length > 0) {
+      decisions.push(...autoDeniedForChannel);
+      console.log(
+        `[Channels] auto-denied ${autoDeniedForChannel.length} approval(s) during routed turn channel=${routedChannelSource.channel} chatId=${routedChannelSource.chatId}`,
+      );
+      const deniedIds = new Set(
+        autoDeniedForChannel.map((decision) => decision.approval.toolCallId),
+      );
+      pendingNeedsUserInput = pendingNeedsUserInput.filter(
+        (ac) => !deniedIds.has(ac.approval.toolCallId),
+      );
+      lastNeedsUserInputToolCallIds = pendingNeedsUserInput.map(
+        (ac) => ac.approval.toolCallId,
+      );
+    }
+  }
 
   if (shouldInterrupt()) {
     return interruptTermination();

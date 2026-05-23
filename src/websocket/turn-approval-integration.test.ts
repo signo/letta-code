@@ -270,9 +270,9 @@ describe("handleApprovalStop — channel MessageChannel auto-approval", () => {
       }),
     });
 
-    // Bash should have gone through WS approval
-    expect(requestApprovalCalls.length).toBe(1);
-    expect(requestApprovalCalls[0]!.toolName).toBe("Bash");
+    // Routed channel turns auto-deny non-MessageChannel approvals
+    // instead of opening WS approval requests.
+    expect(requestApprovalCalls.length).toBe(0);
 
     // classify was called with the Bash approval
     expect(classifyCalls.length).toBe(1);
@@ -468,11 +468,9 @@ describe("handleApprovalStop — channel MessageChannel auto-approval", () => {
       }),
     });
 
-    // MessageChannel should be auto-approved (no WS request)
-    // Only Bash should go through WS
-    expect(requestApprovalCalls.length).toBe(1);
-    expect(requestApprovalCalls[0]!.toolName).toBe("Bash");
-    expect(requestApprovalCalls[0]!.toolCallId).toBe("tc-bash-mixed");
+    // MessageChannel is auto-approved and non-MessageChannel approvals are
+    // auto-denied for routed channel turns (no WS request).
+    expect(requestApprovalCalls.length).toBe(0);
 
     // classify should have been called with only the Bash approval
     expect(classifyCalls.length).toBe(1);
