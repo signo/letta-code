@@ -30,7 +30,6 @@ import {
   refreshInputOtidsForNewRequest,
 } from "@/agent/turn-recovery-policy";
 import { getBackend } from "@/backend";
-import { getChannelRegistry } from "@/channels/registry";
 import { createBuffers, toLines } from "@/cli/helpers/accumulator";
 import { getRetryStatusMessage } from "@/cli/helpers/errorFormatter";
 import {
@@ -675,7 +674,6 @@ export async function handleIncomingMessage(
     let runIdSent = false;
     let runId: string | undefined;
     const buffers = createBuffers(agentId);
-    let sawMessageChannelCall = false;
 
     // eslint-disable-next-line no-constant-condition
     while (true) {
@@ -738,14 +736,6 @@ export async function handleIncomingMessage(
             }
           }
 
-          const chunkRecord = chunk as Record<string, unknown>;
-          if (
-            chunkRecord?.message_type === "tool_call_message" &&
-            chunkRecord?.name === "MessageChannel"
-          ) {
-            sawMessageChannelCall = true;
-          }
-
           if (shouldOutput) {
             const normalizedChunk = normalizeToolReturnWireMessage(
               chunk as unknown as Record<string, unknown>,
@@ -786,43 +776,6 @@ export async function handleIncomingMessage(
       }
 
       if (stopReason === "end_turn") {
-        const sources = runtime.activeChannelTurnSources ?? [];
-        if (
-          sources.length > 0 &&
-          !sawMessageChannelCall &&
-          (buffers.lastAssistantMessage?.trim()?.length ?? 0) > 0
-        ) {
-          try {
-            const source = sources[0];
-            const registry = getChannelRegistry();
-            const fallbackText = buffers.lastAssistantMessage?.trim() ?? "";
-            if (source && registry && fallbackText) {
-              const adapter = registry.getAdapter(
-                source.channel,
-                source.accountId,
-              );
-              if (adapter && adapter.isRunning()) {
-                console.log(
-                  `[Channels] fallback send engaged channel=${source.channel} chatId=${source.chatId} accountId=${source.accountId ?? "none"}`,
-                );
-                await adapter.sendMessage({
-                  channel: source.channel,
-                  accountId: source.accountId,
-                  chatId: source.chatId,
-                  text: fallbackText,
-                  threadId: source.threadId,
-                });
-              }
-            }
-          } catch (error) {
-            console.error(
-              `[Channels] fallback send failed: ${
-                error instanceof Error ? error.message : String(error)
-              }`,
-            );
-          }
-        }
-
         try {
           const transcriptLines = toLines(buffers);
           if (transcriptLines.length > 0) {
