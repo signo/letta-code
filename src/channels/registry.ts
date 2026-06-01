@@ -12,6 +12,7 @@
 import type { MessageCreate } from "@letta-ai/letta-client/resources/agents/agents";
 import { ISOLATED_BLOCK_LABELS } from "@/agent/memory";
 import { getClient } from "@/backend/api/client";
+import { getBackend } from "@/backend/backend";
 import { buildChatUrl, isLocalAgentId } from "@/cli/helpers/app-urls";
 import type { ApprovalResponseBody } from "@/types/protocol_v2";
 import {
@@ -2118,6 +2119,34 @@ export async function initializeChannels(
           `failed ${channelId}/${account.accountId}: ${formatChannelStartupError(error)}`,
         );
       }
+    }
+  }
+
+  // Layer 2: startup reconciliation — verify all stored routes still have
+  // valid conversations on the server. For any missing, create a replacement
+  // and update the route before the first routed message arrives.
+  // Scope: Discord + WhatsApp only (Telegram excluded per Phase 4 scope).
+  const reconciliationSupportedChannels = ["discord", "whatsapp"];
+  for (const channelId of channelNames) {
+    if (!reconciliationSupportedChannels.includes(channelId)) continue;
+    try {
+      const { reconcileRoutesAgainstServer } = await import(
+        "@/channels/routing"
+      );
+      const reconcileResult = await reconcileRoutesAgainstServer({
+        backend: getBackend(),
+        supportedChannelIds: [channelId],
+      });
+      if (reconcileResult.replaced > 0) {
+        console.log(
+          `[Channels] startup reconciliation: ${reconcileResult.replaced} route(s) healed on ${channelId}`,
+        );
+      }
+    } catch (reconcileError) {
+      // Startup reconciliation is best-effort — log and continue.
+      console.warn(
+        `[Channels] startup reconciliation failed for ${channelId}: ${reconcileError instanceof Error ? reconcileError.message : String(reconcileError)}`,
+      );
     }
   }
 

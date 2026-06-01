@@ -724,25 +724,122 @@ export async function handleIncomingMessage(
     const isPureApprovalContinuation = isApprovalOnlyInput(currentInput);
     const currentInputWithSkillContent = injectQueuedSkillContent(currentInput);
 
-    let stream = isPureApprovalContinuation
-      ? await sendApprovalContinuationWithRetry(
-          conversationId,
-          currentInputWithSkillContent,
-          buildSendOptions(),
-          socket,
-          runtime,
-          turnAbortSignal,
-          { providerFallback },
-        )
-      : await sendMessageStreamWithRetry(
-          conversationId,
-          currentInputWithSkillContent,
-          buildSendOptions(),
-          socket,
-          runtime,
-          turnAbortSignal,
-          { providerFallback },
+    // Layer 1: runtime auto-heal for missing conversations on routed channel turns.
+    // If the stream request returns 404 (conversation deleted/server wipe),
+    // create a new conversation, update the route, and retry once.
+    async function tryStreamWithConversationHeal(
+      convId: string,
+      messages: Parameters<typeof sendMessageStream>[1],
+      opts: Parameters<typeof sendMessageStream>[2],
+    ): Promise<Awaited<ReturnType<typeof sendMessageStreamWithRetry>> | null> {
+      try {
+        return isPureApprovalContinuation
+          ? await sendApprovalContinuationWithRetry(
+              convId,
+              messages,
+              opts,
+              socket,
+              runtime,
+              turnAbortSignal,
+              { providerFallback },
+            )
+          : await sendMessageStreamWithRetry(
+              convId,
+              messages,
+              opts,
+              socket,
+              runtime,
+              turnAbortSignal,
+              { providerFallback },
+            );
+      } catch (error) {
+        if (!routedChannelTurn) throw error;
+        const status =
+          error instanceof Error &&
+          "status" in error &&
+          typeof (error as { status?: unknown }).status === "number"
+            ? (error as { status: number }).status
+            : null;
+        if (status !== 404) throw error;
+
+        const oldConv = convId;
+        console.log(
+          `[Channels] routed auto-heal: missing conversation detected (oldConv=${oldConv} agent=${agentId})`,
         );
+
+        try {
+          const backend = getBackend();
+          const newConv = await backend.createConversation({
+            agent_id: agentId!,
+          });
+          const newId = newConv?.id;
+          if (!newId) {
+            console.warn(
+              `[Channels] routed auto-heal: failed to create replacement conversation for agent=${agentId}`,
+            );
+            throw error;
+          }
+
+          console.log(
+            `[Channels] routed auto-heal: replacement conversation created (newConv=${newId})`,
+          );
+
+          const { updateRouteConversationId } = await import(
+            "@/channels/routing"
+          );
+          const sources = msg.channelTurnSources ?? [];
+          const source = sources[0];
+          const updated =
+            source &&
+            updateRouteConversationId(
+              source.channel,
+              source.chatId,
+              source.accountId,
+              source.threadId,
+              newId,
+            );
+
+          if (updated) {
+            console.log(
+              `[Channels] routed auto-heal: route updated for source ${source.channel}:${source.chatId}`,
+            );
+          }
+
+          // Retry with new conversation ID
+          console.log(`[Channels] routed auto-heal: retry started`);
+          return isPureApprovalContinuation
+            ? await sendApprovalContinuationWithRetry(
+                newId,
+                messages,
+                opts,
+                socket,
+                runtime,
+                turnAbortSignal,
+                { providerFallback },
+              )
+            : await sendMessageStreamWithRetry(
+                newId,
+                messages,
+                opts,
+                socket,
+                runtime,
+                turnAbortSignal,
+                { providerFallback },
+              );
+        } catch (healError) {
+          console.warn(
+            `[Channels] routed auto-heal: retry failed (reason=${healError instanceof Error ? healError.message : String(healError)})`,
+          );
+          throw error;
+        }
+      }
+    }
+
+    let stream = await tryStreamWithConversationHeal(
+      conversationId,
+      currentInputWithSkillContent,
+      buildSendOptions(),
+    );
     currentInput = currentInputWithSkillContent;
     if (!stream) {
       return;

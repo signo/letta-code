@@ -10,7 +10,7 @@
  */
 
 import { afterEach, beforeEach, describe, expect, test, vi } from "bun:test";
-import type { ChannelTurnSource, WhatsAppChannelAccount } from "@/channels/types";
+import type { ChannelTurnSource } from "@/channels/types";
 import { RoutedTurnBudget } from "./routedTurnBudget";
 import { recordToolCall, noteOutboundSent } from "./whatsappTurnBudget";
 
@@ -336,7 +336,6 @@ describe("turn-level budget wiring", () => {
   describe("turn.ts signalEnd reason mapping", () => {
     test("budget_heavy_bash_exceeded reason is usable as TurnFailureReason", () => {
       // Verify the reason strings are compatible with ChannelTurnFinishReason
-      const reason: ChannelTurnSource["agentId"] extends infer R ? R : never = "agent-1"; // just using type
       const budgetReasons: Array<"budget_heavy_bash_exceeded" | "budget_tool_calls_exceeded" | "budget_elapsed_exceeded"> = [
         "budget_heavy_bash_exceeded",
         "budget_tool_calls_exceeded",
