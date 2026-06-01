@@ -3,6 +3,7 @@ import { formatChannelLifecycleErrorMessage } from "@/channels/lifecycle-error";
 import type {
   ChannelAdapter,
   ChannelTurnLifecycleEvent,
+  ChannelTurnLivenessEvent,
   ChannelTurnSource,
   DiscordChannelAccount,
   InboundChannelMessage,
@@ -956,6 +957,47 @@ export function createDiscordAdapter(
           }
         }),
       );
+    },
+
+    async handleTurnLivenessEvent(event: ChannelTurnLivenessEvent): Promise<void> {
+      if (!running || !client) return;
+      const discordClient = client;
+      if (event.type === "typing_refresh") {
+        // Refresh typing presence by reacting to the incoming message.
+        await Promise.all(
+          event.sources.map(async (source) => {
+            const targetChannelId = source.threadId ?? source.chatId;
+            const channel = await discordClient.channels.fetch(targetChannelId);
+            if (!hasDiscordMessageFetcher(channel)) return;
+            try {
+              if (source.messageId) {
+                const msg = await channel.messages.fetch(source.messageId);
+                await msg.react(resolveDiscordReactionEmoji("eyes"));
+              }
+            } catch {
+              // Best-effort.
+            }
+          }),
+        );
+      }
+      if (event.type === "tool_waiting") {
+        // Show a reaction as a progress signal while tools execute.
+        await Promise.all(
+          event.sources.map(async (source) => {
+            const targetChannelId = source.threadId ?? source.chatId;
+            const channel = await discordClient.channels.fetch(targetChannelId);
+            if (!hasDiscordMessageFetcher(channel)) return;
+            try {
+              if (source.messageId) {
+                const msg = await channel.messages.fetch(source.messageId);
+                await msg.react(resolveDiscordReactionEmoji("eyes"));
+              }
+            } catch {
+              // Best-effort.
+            }
+          }),
+        );
+      }
     },
 
     async sendMessage(

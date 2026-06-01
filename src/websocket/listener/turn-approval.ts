@@ -10,6 +10,7 @@ import {
 } from "@/agent/approval-execution";
 import { getChannelRegistry } from "@/channels/registry";
 import type { ChannelTurnSource } from "@/channels/types";
+import { classifyToolCategory } from "@/channels/turnLiveness";
 import { computeDiffPreviews } from "@/helpers/diff-preview";
 import { formatPermissionDenial } from "@/permissions/format-denial";
 import {
@@ -144,6 +145,7 @@ export async function handleApprovalStop(params: {
     typeof sendApprovalContinuationWithRetry
   >[2];
   providerFallback?: ProviderFallbackState;
+  channelLiveness?: import("@/channels/turnLiveness").ChannelTurnLiveness | null;
 }): Promise<ApprovalBranchResult> {
   const {
     approvals,
@@ -160,6 +162,7 @@ export async function handleApprovalStop(params: {
     turnToolContextId,
     buildSendOptions,
     providerFallback,
+    channelLiveness,
   } = params;
   const abortController = runtime.activeAbortController;
 
@@ -429,6 +432,22 @@ export async function handleApprovalStop(params: {
     agent_id: agentId,
     conversation_id: conversationId,
   });
+
+  // Signal liveness for non-MessageChannel tools — these are what mask
+  // progress on channels. MessageChannel tools are handled by the
+  // onCompleted callback instead.
+  for (const decision of decisions) {
+    if (decision.type === "approve") {
+      const toolName = decision.approval.toolName;
+      if (toolName !== "MessageChannel" && toolName !== "message_channel") {
+        void channelLiveness?.signalStrong(
+          "tool_call_message",
+          classifyToolCategory(toolName),
+        );
+      }
+    }
+  }
+
   emitRuntimeStateUpdates(runtime, {
     agent_id: agentId,
     conversation_id: conversationId,

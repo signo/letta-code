@@ -69,6 +69,11 @@ import {
   PROVIDER_FALLBACK_NOTICE,
 } from "./constants";
 import { getConversationWorkingDirectory } from "./cwd";
+import { getChannelRegistry } from "@/channels/registry";
+import {
+  ChannelTurnLiveness,
+  classifyEndTurnOutcome,
+} from "@/channels/turnLiveness";
 import {
   consumeInterruptQueue,
   emitInterruptToolReturnMessage,
@@ -338,6 +343,10 @@ export async function handleIncomingMessage(
   let lastExecutingToolCallIds: string[] = [];
   let lastNeedsUserInputToolCallIds: string[] = [];
 
+  // Declared here so the catch block (outside the try) can also reference them.
+  let routedChannelTurn = false; // assigned properly below after msg is available
+  let channelLiveness: ChannelTurnLiveness | null = null;
+
   runtime.isProcessing = true;
   runtime.cancelRequested = false;
   runtime.lastStopReason = null;
@@ -412,6 +421,88 @@ export async function handleIncomingMessage(
       },
     );
     trackListenerUserInput(normalizedMessages, "unknown");
+    routedChannelTurn = (msg.channelTurnSources?.length ?? 0) > 0;
+    let channelLiveness: ChannelTurnLiveness | null = null;
+
+    if (routedChannelTurn) {
+      const sources = msg.channelTurnSources!;
+      console.log(
+        `[Channels] routed turn: agent=${agentId} conv=${conversationId} sources=${sources.map((s) => `${s.channel}:${s.chatId}`).join(",")}`,
+      );
+
+      const registry = getChannelRegistry();
+      if (registry) {
+        registry
+          .dispatchTurnLifecycleEvent({
+            type: "processing",
+            batchId: activeDequeuedBatchId,
+            sources,
+          })
+          .catch(() => {});
+
+        channelLiveness = new ChannelTurnLiveness(
+          sources,
+          {
+            onDispatchAck: async (srcs) => {
+              for (const src of srcs) {
+                const ad = registry.getAdapter(src.channel, src.accountId);
+                if (ad) {
+                  await registry
+                    .dispatchTurnLivenessEvent({
+                      type: "typing_refresh",
+                      batchId: activeDequeuedBatchId,
+                      sources: [src],
+                    })
+                    .catch(() => {});
+                }
+              }
+            },
+            onToolProgress: async (srcs, toolCategory) => {
+              for (const src of srcs) {
+                await registry
+                  .dispatchTurnLivenessEvent({
+                    type: "tool_waiting",
+                    batchId: activeDequeuedBatchId,
+                    sources: [src],
+                    toolCategory,
+                  })
+                  .catch(() => {});
+              }
+            },
+            onCompleted: async (srcs) => {
+              // Completed — dispatch finished so adapters stop typing presence.
+              for (const src of srcs) {
+                await registry
+                  .dispatchTurnLifecycleEvent({
+                    type: "finished",
+                    batchId: activeDequeuedBatchId,
+                    sources: [src],
+                    outcome: "completed",
+                  })
+                  .catch(() => {});
+              }
+            },
+            onFailed: async (srcs, reason) => {
+              for (const src of srcs) {
+                await registry
+                  .dispatchTurnLifecycleEvent({
+                    type: "finished",
+                    batchId: activeDequeuedBatchId,
+                    sources: [src],
+                    outcome: "error",
+                    error: `Turn failed: ${reason}`,
+                    reason: `Turn failed: ${reason}`,
+                    finishReason: reason,
+                  })
+                  .catch(() => {});
+              }
+            },
+          },
+          { abortController: turnAbortController },
+        );
+      }
+    }
+
     const messagesToSend: Array<MessageCreate | ApprovalCreate> = [];
     let turnToolContextId: string | null = null;
     let queuedInterruptedToolCallIds: string[] = [];
@@ -715,6 +806,22 @@ export async function handleIncomingMessage(
       }
 
       if (stopReason === "end_turn") {
+        if (routedChannelTurn) {
+          const endOutcome = channelLiveness
+            ? classifyEndTurnOutcome(channelLiveness.getMetadata())
+            : "silent_end";
+          if (endOutcome === "completed") {
+            console.log(
+              `[Channels] end_turn on routed turn — agent=${agentId} conv=${conversationId} (MessageChannel was seen, marking completed)`,
+            );
+            channelLiveness?.complete();
+          } else {
+            console.log(
+              `[Channels] end_turn on routed turn — agent=${agentId} conv=${conversationId} (outcome=${endOutcome})`,
+            );
+            channelLiveness?.signalEnd(endOutcome);
+          }
+        }
         try {
           const transcriptLines = toLines(buffers);
           if (transcriptLines.length > 0) {
@@ -787,6 +894,9 @@ export async function handleIncomingMessage(
       }
 
       if (stopReason === "cancelled") {
+        if (routedChannelTurn) {
+          channelLiveness?.signalEnd("cancelled");
+        }
         finalizeInterruptedTurn(socket, runtime, {
           runId: runId || runtime.activeRunId,
           agentId: agentId ?? null,
@@ -1116,8 +1226,12 @@ export async function handleIncomingMessage(
         turnToolContextId,
         buildSendOptions,
         providerFallback,
+        channelLiveness,
       });
       if (approvalResult.terminated || !approvalResult.stream) {
+        if (routedChannelTurn) {
+          channelLiveness?.signalEnd("approval_blocked");
+        }
         return;
       }
       stream = approvalResult.stream;
@@ -1137,6 +1251,12 @@ export async function handleIncomingMessage(
       );
     }
   } catch (error) {
+    // Mark routed channel turns as failed if the turn loop throws before
+    // reaching an explicit resolution path.
+    const liveness: ChannelTurnLiveness = channelLiveness!;
+    if (routedChannelTurn) {
+      liveness.signalEnd("runtime_error");
+    }
     trackBoundaryError({
       errorType: "listener_turn_processing_failed",
       error,

@@ -87,9 +87,34 @@ export interface ChannelTurnSource {
   threadId?: string | null;
   agentId: string;
   conversationId: string;
+  /** WhatsApp-specific: the resolved phone JID for a LID-routed DM.
+   *  Set by the WhatsApp adapter so that turn-approval can match
+   *  MessageChannel tool calls that use the phone JID instead of the LID. */
+  resolvedPhoneJid?: string;
 }
 
 export type ChannelTurnOutcome = "completed" | "error" | "cancelled";
+
+/**
+ * Failure reason for channel turns that end without producing a reply.
+ * Used to decide which user-visible fallback message to send.
+ */
+export type ChannelTurnFinishReason =
+  | "silent_end" /** Turn ended without MessageChannel; no tool calls occurred. */
+  | "silent_end_with_tools" /** Turn ended without MessageChannel; tool calls occurred — no auto-retry. */
+  | "provider_timeout" /** Model/provider took too long to respond. */
+  | "runtime_error" /** Internal runtime error (catch, abort, stream failure). */
+  | "approval_blocked" /** Approval flow could not complete. */
+  | "cancelled" /** User-initiated cancellation. */;
+
+/** Tool category for liveness progress UX. */
+export type ToolCategory =
+  | "bash"
+  | "ssh"
+  | "file"
+  | "search"
+  | "generic"
+  | "message_channel";
 
 export type ChannelControlRequestKind =
   | "ask_user_question"
@@ -118,7 +143,31 @@ export type ChannelTurnLifecycleEvent =
       batchId: string;
       sources: ChannelTurnSource[];
       outcome: ChannelTurnOutcome;
+      /** Legacy human-readable error text. Kept for backward compatibility. */
       error?: string;
+      /** Human-readable reason (optional machine-readable label). */
+      reason?: string;
+      /** Structured failure reason for channel-side UX routing. */
+      finishReason?: ChannelTurnFinishReason;
+    };
+
+/**
+ * Liveness-specific events dispatched only to adapters that implement
+ * `handleTurnLivenessEvent`. These are NOT part of ChannelTurnLifecycleEvent
+ * because they represent optional UX signals (typing refresh, tool-waiting
+ * reactions/messages) that most adapters do not need to handle.
+ */
+export type ChannelTurnLivenessEvent =
+  | {
+      type: "typing_refresh";
+      batchId: string;
+      sources: ChannelTurnSource[];
+    }
+  | {
+      type: "tool_waiting";
+      batchId: string;
+      sources: ChannelTurnSource[];
+      toolCategory: ToolCategory;
     };
 
 // ── Adapter interface ─────────────────────────────────────────────
@@ -175,6 +224,13 @@ export interface ChannelAdapter {
    * without coupling queue/lifecycle state to a specific channel.
    */
   handleTurnLifecycleEvent?(event: ChannelTurnLifecycleEvent): Promise<void>;
+
+  /**
+   * Optional hook for liveness events (typing refresh, tool-waiting).
+   * Adapters can use this to send typing indicators, "working" reactions,
+   * or ephemeral status messages during long tool calls.
+   */
+  handleTurnLivenessEvent?(event: ChannelTurnLivenessEvent): Promise<void>;
 
   /**
    * Optional hook for control requests that originate from a channel turn.
