@@ -29,6 +29,23 @@ import {
   refreshInputOtidsForNewRequest,
 } from "@/agent/turn-recovery-policy";
 import { getBackend } from "@/backend";
+import type { RoutedTurnBudget } from "@/channels/budget/routedTurnBudget";
+import {
+  createWhatsAppTurnBudget,
+  isWhatsAppSource,
+  noteOutboundSent,
+  recordToolCall,
+} from "@/channels/budget/whatsappTurnBudget";
+import { getChannelRegistry } from "@/channels/registry";
+import {
+  ChannelTurnLiveness,
+  classifyEndTurnOutcome,
+  classifyToolCategory,
+} from "@/channels/turnLiveness";
+import type {
+  OutboundChannelMessage,
+  WhatsAppChannelAccount,
+} from "@/channels/types";
 import { createBuffers, toLines } from "@/cli/helpers/accumulator";
 import type { ContextTracker } from "@/cli/helpers/context-tracker";
 import { getRetryStatusMessage } from "@/cli/helpers/error-formatter";
@@ -69,13 +86,6 @@ import {
   PROVIDER_FALLBACK_NOTICE,
 } from "./constants";
 import { getConversationWorkingDirectory } from "./cwd";
-import { getChannelRegistry } from "@/channels/registry";
-import {
-  ChannelTurnLiveness,
-  classifyEndTurnOutcome,
-  classifyToolCategory,
-} from "@/channels/turnLiveness";
-import type { OutboundChannelMessage, WhatsAppChannelAccount } from "@/channels/types";
 import {
   consumeInterruptQueue,
   emitInterruptToolReturnMessage,
@@ -84,13 +94,6 @@ import {
   normalizeToolReturnWireMessage,
   populateInterruptQueue,
 } from "./interrupts";
-import {
-  createWhatsAppTurnBudget,
-  isWhatsAppSource,
-  noteOutboundSent,
-  recordToolCall,
-} from "@/channels/budget/whatsappTurnBudget";
-import type { RoutedTurnBudget } from "@/channels/budget/routedTurnBudget";
 import {
   getOrCreateConversationPermissionModeStateRef,
   persistPermissionModeMapForRuntime,
@@ -354,7 +357,7 @@ export async function handleIncomingMessage(
 
   // Declared here so the catch block (outside the try) can also reference them.
   let routedChannelTurn = false; // assigned properly below after msg is available
-  let channelLiveness: ChannelTurnLiveness | null = null;
+  const channelLiveness: ChannelTurnLiveness | null = null;
   let turnBudget: RoutedTurnBudget | null = null; // Budget active only for WhatsApp routed turns
 
   runtime.isProcessing = true;
@@ -526,9 +529,11 @@ export async function handleIncomingMessage(
           if (
             adapter &&
             "account" in adapter &&
-            (adapter as { account?: { channel?: string } }).account?.channel === "whatsapp"
+            (adapter as { account?: { channel?: string } }).account?.channel ===
+              "whatsapp"
           ) {
-            const account = (adapter as { account: WhatsAppChannelAccount }).account;
+            const account = (adapter as { account: WhatsAppChannelAccount })
+              .account;
             const chatId = source.chatId;
             turnBudget = createWhatsAppTurnBudget({
               account,
@@ -542,7 +547,11 @@ export async function handleIncomingMessage(
                   text: message,
                 };
                 try {
-                  const whatsappAdapter = adapter as { sendMessage?: (msg: OutboundChannelMessage) => Promise<{ messageId: string }> };
+                  const whatsappAdapter = adapter as {
+                    sendMessage?: (
+                      msg: OutboundChannelMessage,
+                    ) => Promise<{ messageId: string }>;
+                  };
                   await whatsappAdapter.sendMessage?.(progressMsg);
                 } catch (e) {
                   console.warn("[Channels] auto-progress send failed:", e);
@@ -724,25 +733,122 @@ export async function handleIncomingMessage(
     const isPureApprovalContinuation = isApprovalOnlyInput(currentInput);
     const currentInputWithSkillContent = injectQueuedSkillContent(currentInput);
 
-    let stream = isPureApprovalContinuation
-      ? await sendApprovalContinuationWithRetry(
-          conversationId,
-          currentInputWithSkillContent,
-          buildSendOptions(),
-          socket,
-          runtime,
-          turnAbortSignal,
-          { providerFallback },
-        )
-      : await sendMessageStreamWithRetry(
-          conversationId,
-          currentInputWithSkillContent,
-          buildSendOptions(),
-          socket,
-          runtime,
-          turnAbortSignal,
-          { providerFallback },
+    // Layer 1: runtime auto-heal for missing conversations on routed channel turns.
+    // If the stream request returns 404 (conversation deleted/server wipe),
+    // create a new conversation, update the route, and retry once.
+    async function tryStreamWithConversationHeal(
+      convId: string,
+      messages: Parameters<typeof sendMessageStream>[1],
+      opts: Parameters<typeof sendMessageStream>[2],
+    ): Promise<Awaited<ReturnType<typeof sendMessageStreamWithRetry>> | null> {
+      try {
+        return isPureApprovalContinuation
+          ? await sendApprovalContinuationWithRetry(
+              convId,
+              messages,
+              opts,
+              socket,
+              runtime,
+              turnAbortSignal,
+              { providerFallback },
+            )
+          : await sendMessageStreamWithRetry(
+              convId,
+              messages,
+              opts,
+              socket,
+              runtime,
+              turnAbortSignal,
+              { providerFallback },
+            );
+      } catch (error) {
+        if (!routedChannelTurn) throw error;
+        const status =
+          error instanceof Error &&
+          "status" in error &&
+          typeof (error as { status?: unknown }).status === "number"
+            ? (error as { status: number }).status
+            : null;
+        if (status !== 404) throw error;
+
+        const oldConv = convId;
+        console.log(
+          `[Channels] routed auto-heal: missing conversation detected (oldConv=${oldConv} agent=${agentId})`,
         );
+
+        try {
+          const backend = getBackend();
+          const newConv = await backend.createConversation({
+            agent_id: agentId!,
+          });
+          const newId = newConv?.id;
+          if (!newId) {
+            console.warn(
+              `[Channels] routed auto-heal: failed to create replacement conversation for agent=${agentId}`,
+            );
+            throw error;
+          }
+
+          console.log(
+            `[Channels] routed auto-heal: replacement conversation created (newConv=${newId})`,
+          );
+
+          const { updateRouteConversationId } = await import(
+            "@/channels/routing"
+          );
+          const sources = msg.channelTurnSources ?? [];
+          const source = sources[0];
+          const updated =
+            source &&
+            updateRouteConversationId(
+              source.channel,
+              source.chatId,
+              source.accountId,
+              source.threadId,
+              newId,
+            );
+
+          if (updated) {
+            console.log(
+              `[Channels] routed auto-heal: route updated for source ${source.channel}:${source.chatId}`,
+            );
+          }
+
+          // Retry with new conversation ID
+          console.log(`[Channels] routed auto-heal: retry started`);
+          return isPureApprovalContinuation
+            ? await sendApprovalContinuationWithRetry(
+                newId,
+                messages,
+                opts,
+                socket,
+                runtime,
+                turnAbortSignal,
+                { providerFallback },
+              )
+            : await sendMessageStreamWithRetry(
+                newId,
+                messages,
+                opts,
+                socket,
+                runtime,
+                turnAbortSignal,
+                { providerFallback },
+              );
+        } catch (healError) {
+          console.warn(
+            `[Channels] routed auto-heal: retry failed (reason=${healError instanceof Error ? healError.message : String(healError)})`,
+          );
+          throw error;
+        }
+      }
+    }
+
+    let stream = await tryStreamWithConversationHeal(
+      conversationId,
+      currentInputWithSkillContent,
+      buildSendOptions(),
+    );
     currentInput = currentInputWithSkillContent;
     if (!stream) {
       return;
@@ -840,8 +946,7 @@ export async function handleIncomingMessage(
               const toolName =
                 typeof toolCallChunk.name === "string"
                   ? toolCallChunk.name
-                  : typeof toolCallChunk.tool_call?.function?.name ===
-                      "string"
+                  : typeof toolCallChunk.tool_call?.function?.name === "string"
                     ? toolCallChunk.tool_call.function.name
                     : "(unknown)";
 
@@ -898,7 +1003,10 @@ export async function handleIncomingMessage(
                   toolCategory,
                 );
               } else {
-                channelLiveness?.signalStrong("tool_call_message", toolCategory);
+                channelLiveness?.signalStrong(
+                  "tool_call_message",
+                  toolCategory,
+                );
               }
             }
           }
