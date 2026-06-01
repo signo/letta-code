@@ -8,8 +8,14 @@ import {
   type ApprovalResult,
   executeApprovalBatch,
 } from "@/agent/approval-execution";
+import { getChannelAccount } from "@/channels/accounts";
 import { getChannelRegistry } from "@/channels/registry";
-import type { ChannelTurnSource } from "@/channels/types";
+import { isWhatsAppChannelAccount, type ChannelTurnSource } from "@/channels/types";
+import {
+  evaluateToolPolicy,
+  formatToolPolicyDenial,
+  type ToolPolicy,
+} from "@/channels/toolPolicy";
 import { classifyToolCategory } from "@/channels/turnLiveness";
 import { computeDiffPreviews } from "@/helpers/diff-preview";
 import { formatPermissionDenial } from "@/permissions/format-denial";
@@ -123,6 +129,80 @@ export function resolveChannelApprovalSource(
   return [...sourcesByScope.values()].at(-1) ?? null;
 }
 
+/**
+ * Resolve the tool policy for a channel turn source.
+ * Returns null if no tool policy is configured (allow all by default).
+ * Currently only WhatsApp supports tool policy.
+ */
+function resolveToolPolicy(source: ChannelTurnSource): ToolPolicy | null {
+  if (!source.accountId) {
+    return null;
+  }
+
+  const account = getChannelAccount(source.channel, source.accountId);
+  if (!account) {
+    return null;
+  }
+
+  if (!isWhatsAppChannelAccount(account)) {
+    return null;
+  }
+
+  const allowedTools = account.allowedTools;
+  const blockedTools = account.blockedTools;
+
+  // Default WhatsApp tool policy: read + web_search.
+  // If neither field is set on the account, apply the safe default.
+  // If at least one is set, use as-is.
+  return {
+    allowedTools: allowedTools ?? ["read", "web_search"],
+    blockedTools: blockedTools ?? [],
+  };
+}
+
+/**
+ * Returns true if the tool is a MessageChannel call that can be safely
+ * auto-approved for channel-routed turns without going through interactive
+ * approval. Defense-in-depth: also validates that the tool args target the
+ * same channel/chat as the active routed turn source.
+ */
+export function shouldAutoApproveChannelMessageTool(params: {
+  runtime: ConversationRuntime;
+  toolName: string;
+  toolArgs?: string;
+}): boolean {
+  if (
+    params.toolName !== "MessageChannel" &&
+    params.toolName !== "message_channel"
+  ) {
+    return false;
+  }
+
+  const source = resolveChannelApprovalSource(params.runtime);
+  if (!source) {
+    return false;
+  }
+
+  if (params.toolArgs) {
+    try {
+      const args = JSON.parse(params.toolArgs) as {
+        channel?: string;
+        chat_id?: string;
+        target_chat_id?: string;
+      };
+      if (args.channel && args.channel !== source.channel) return false;
+      if (args.chat_id && args.chat_id !== source.chatId) return false;
+      if (args.target_chat_id && args.target_chat_id !== source.chatId)
+        return false;
+    } catch {
+      // Invalid JSON — don't block auto-approval on parse failure;
+      // the tool execution will fail if args are wrong.
+    }
+  }
+
+  return true;
+}
+
 export async function handleApprovalStop(params: {
   approvals: Array<{
     toolCallId: string;
@@ -210,8 +290,70 @@ export async function handleApprovalStop(params: {
   clearPendingApprovalBatchIds(runtime, approvals);
   rememberPendingApprovalBatchIds(runtime, approvals, dequeuedBatchId);
 
+  // Channel auto-approval: MessageChannel tools for routed turns are approved
+  // without going through interactive approval. This is safe because the
+  // tool args are validated against the active channel source.
+  const channelAutoAllowed = approvals.filter((approval) =>
+    shouldAutoApproveChannelMessageTool({
+      runtime,
+      toolName: approval.toolName,
+      toolArgs: approval.toolArgs,
+    }),
+  );
+  if (channelAutoAllowed.length > 0) {
+    console.log(
+      `[Channels] auto-allowed ${channelAutoAllowed.length} channel tool calls`,
+    );
+    // Signal liveness for MessageChannel — these don't produce tool_call_message
+    // stream chunks so the drain-callback path never fires; signal here instead.
+    channelLiveness?.signalStrong("message_channel_tool_call", "message_channel");
+  }
+
+  // Apply per-account tool policy for channel turns (WhatsApp only in Phase 2).
+  // Auto-approves or denies tools based on allowedTools/blockedTools, preventing
+  // approval deadlock for channel-routed turns.
+  const channelSource = resolveChannelApprovalSource(runtime);
+  const toolPolicy = channelSource ? resolveToolPolicy(channelSource) : null;
+  const policyAutoApproved: typeof approvals = [];
+  const policyDenied: Decision[] = [];
+
+  if (toolPolicy) {
+    for (const approval of approvals) {
+      if (channelAutoAllowed.some(
+        (a) => a.toolCallId === approval.toolCallId,
+      )) {
+        continue; // Already auto-approved as MessageChannel.
+      }
+      const decision = evaluateToolPolicy(approval.toolName, toolPolicy);
+      if (decision === "allow") {
+        policyAutoApproved.push(approval);
+      } else {
+        policyDenied.push({
+          type: "deny" as const,
+          approval,
+          reason: formatToolPolicyDenial(approval.toolName),
+        });
+      }
+    }
+    if (policyAutoApproved.length > 0 || policyDenied.length > 0) {
+      console.log(
+        `[Channels] tool policy: ${policyAutoApproved.length} auto-approved, ${policyDenied.length} denied`,
+      );
+    }
+  }
+
+  // For channel turns with tool policy: all tools handled by policy, no further
+  // classification. For non-channel turns or turns without tool policy: use
+  // normal classification, excluding already-channel-auto-approved tools.
+  const approvalsForClassification = toolPolicy
+    ? []
+    : approvals.filter(
+        (approval) =>
+          !channelAutoAllowed.some((a) => a.toolCallId === approval.toolCallId),
+      );
+
   const { autoAllowed, autoDenied, needsUserInput } =
-    await classifyApprovalsWithSuggestions(approvals, {
+    await classifyApprovalsWithSuggestions(approvalsForClassification, {
       alwaysRequiresUserInput: isInteractiveApprovalTool,
       treatAskAsDeny: false,
       requireArgsForAutoApprove: true,
@@ -257,6 +399,18 @@ export async function handleApprovalStop(params: {
   };
 
   const decisions: Decision[] = [
+    // 1. MessageChannel tools auto-approved for routed channel turns.
+    ...channelAutoAllowed.map((approval) => ({
+      type: "approve" as const,
+      approval,
+    })),
+    // 2. Tools auto-approved or denied by per-account tool policy.
+    ...policyAutoApproved.map((approval) => ({
+      type: "approve" as const,
+      approval,
+    })),
+    ...policyDenied,
+    // 3. Normal permission-based classification.
     ...autoAllowed.map((ac) => ({
       type: "approve" as const,
       approval: ac.approval,

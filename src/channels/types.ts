@@ -449,6 +449,10 @@ export interface DiscordChannelConfig {
    * Clamped to `0..10000`.
    */
   inboundDebounceMs?: number;
+  /** Tool name allowlist for this account's channel turns. ["*"] = all tools allowed. [] = no tools allowed. Default: undefined (= all allowed). */
+  allowedTools?: string[];
+  /** Tool name blocklist — subtracts from effective allowed set. Default: undefined (= []). */
+  blockedTools?: string[];
 }
 
 export interface WhatsAppChannelConfig {
@@ -471,6 +475,10 @@ export interface WhatsAppChannelConfig {
   downloadMedia?: boolean;
   /** Maximum inbound media bytes to download. Undefined uses channel default. */
   mediaMaxBytes?: number;
+  /** Tool name allowlist for this account's channel turns. ["*"] = all tools allowed. [] = no tools allowed. Default: undefined (= all allowed). */
+  allowedTools?: string[];
+  /** Tool name blocklist — subtracts from effective allowed set. Default: undefined (= []). */
+  blockedTools?: string[];
 }
 
 export type ChannelConfig =
@@ -597,6 +605,10 @@ export interface WhatsAppChannelAccount extends ChannelAccountBase {
   downloadMedia?: boolean;
   /** Maximum inbound media bytes to download. Undefined uses channel default. */
   mediaMaxBytes?: number;
+  /** Tool name allowlist for this account's channel turns. ["*"] = all tools allowed. [] = no tools allowed. Default: undefined (= all allowed). */
+  allowedTools?: string[];
+  /** Tool name blocklist — subtracts from effective allowed set. Default: undefined (= []). */
+  blockedTools?: string[];
 }
 
 export type ChannelAccount =
