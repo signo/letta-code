@@ -105,7 +105,10 @@ export type ChannelTurnFinishReason =
   | "provider_timeout" /** Model/provider took too long to respond. */
   | "runtime_error" /** Internal runtime error (catch, abort, stream failure). */
   | "approval_blocked" /** Approval flow could not complete. */
-  | "cancelled" /** User-initiated cancellation. */;
+  | "cancelled" /** User-initiated cancellation. */
+  | "budget_heavy_bash_exceeded" /** Too many heavy bash calls in routed turn. */
+  | "budget_tool_calls_exceeded" /** Too many tool calls in routed turn. */
+  | "budget_elapsed_exceeded" /** Routed turn exceeded elapsed time budget. */;
 
 /** Tool category for liveness progress UX. */
 export type ToolCategory =
@@ -609,6 +612,16 @@ export interface WhatsAppChannelAccount extends ChannelAccountBase {
   allowedTools?: string[];
   /** Tool name blocklist — subtracts from effective allowed set. Default: undefined (= []). */
   blockedTools?: string[];
+  /** Max tool calls per routed turn. 0 = disabled. Default: 8. */
+  routedTurnMaxToolCalls?: number;
+  /** Max heavy bash calls per routed turn. Default: 2. */
+  routedTurnMaxHeavyBashCalls?: number;
+  /** Max elapsed ms per routed turn. Default: 35000. */
+  routedTurnMaxElapsedMs?: number;
+  /** After this many ms with no outbound message, send auto-progress fallback. 0 = disabled. Default: 7000. */
+  routedTurnAutoProgressAfterMs?: number;
+  /** Auto-progress message text. Default: "Processing your request. I'll update you shortly." */
+  routedTurnAutoProgressMessage?: string;
 }
 
 export type ChannelAccount =

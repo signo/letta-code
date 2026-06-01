@@ -48,7 +48,10 @@ export type TurnFailureReason =
   | "provider_timeout"
   | "runtime_error"
   | "cancelled"
-  | "approval_blocked";
+  | "approval_blocked"
+  | "budget_heavy_bash_exceeded"
+  | "budget_tool_calls_exceeded"
+  | "budget_elapsed_exceeded";
 
 export type TurnLivenessState =
   | "dispatched"

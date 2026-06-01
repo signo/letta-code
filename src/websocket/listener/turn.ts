@@ -73,7 +73,9 @@ import { getChannelRegistry } from "@/channels/registry";
 import {
   ChannelTurnLiveness,
   classifyEndTurnOutcome,
+  classifyToolCategory,
 } from "@/channels/turnLiveness";
+import type { OutboundChannelMessage, WhatsAppChannelAccount } from "@/channels/types";
 import {
   consumeInterruptQueue,
   emitInterruptToolReturnMessage,
@@ -82,6 +84,13 @@ import {
   normalizeToolReturnWireMessage,
   populateInterruptQueue,
 } from "./interrupts";
+import {
+  createWhatsAppTurnBudget,
+  isWhatsAppSource,
+  noteOutboundSent,
+  recordToolCall,
+} from "@/channels/budget/whatsappTurnBudget";
+import type { RoutedTurnBudget } from "@/channels/budget/routedTurnBudget";
 import {
   getOrCreateConversationPermissionModeStateRef,
   persistPermissionModeMapForRuntime,
@@ -346,6 +355,7 @@ export async function handleIncomingMessage(
   // Declared here so the catch block (outside the try) can also reference them.
   let routedChannelTurn = false; // assigned properly below after msg is available
   let channelLiveness: ChannelTurnLiveness | null = null;
+  let turnBudget: RoutedTurnBudget | null = null; // Budget active only for WhatsApp routed turns
 
   runtime.isProcessing = true;
   runtime.cancelRequested = false;
@@ -500,6 +510,52 @@ export async function handleIncomingMessage(
           },
           { abortController: turnAbortController },
         );
+      }
+    }
+
+    // Initialize WhatsApp routed turn budget after liveness setup
+    // (budget shares same lifecycle as channelLiveness — both scoped to routed turns)
+    if (routedChannelTurn) {
+      const registry = getChannelRegistry();
+      const turnSources = msg.channelTurnSources!;
+      if (registry) {
+        const whatsappSources = turnSources.filter(isWhatsAppSource);
+        if (whatsappSources.length > 0) {
+          const source = whatsappSources[0]!;
+          const adapter = registry.getAdapter(source.channel, source.accountId);
+          if (
+            adapter &&
+            "account" in adapter &&
+            (adapter as { account?: { channel?: string } }).account?.channel === "whatsapp"
+          ) {
+            const account = (adapter as { account: WhatsAppChannelAccount }).account;
+            const chatId = source.chatId;
+            turnBudget = createWhatsAppTurnBudget({
+              account,
+              sources: whatsappSources,
+              registry,
+              batchId: activeDequeuedBatchId,
+              onSendProgressMessage: async (message: string) => {
+                const progressMsg: OutboundChannelMessage = {
+                  channel: "whatsapp",
+                  chatId,
+                  text: message,
+                };
+                try {
+                  const whatsappAdapter = adapter as { sendMessage?: (msg: OutboundChannelMessage) => Promise<{ messageId: string }> };
+                  await whatsappAdapter.sendMessage?.(progressMsg);
+                } catch (e) {
+                  console.warn("[Channels] auto-progress send failed:", e);
+                }
+              },
+            });
+            if (turnBudget) {
+              console.log(
+                `[Channels] routed budget created: maxTools=${account.routedTurnMaxToolCalls ?? 8} maxHeavy=${account.routedTurnMaxHeavyBashCalls ?? 2} maxElapsed=${account.routedTurnMaxElapsedMs ?? 35000}ms`,
+              );
+            }
+          }
+        }
       }
     }
 
@@ -766,6 +822,87 @@ export async function handleIncomingMessage(
             }
           }
 
+          // Extract tool_call_message chunks for budget recording + liveness.
+          // Routing: extract tool name + parse args, pass to budget recorder,
+          // enforce block by calling channelLiveness.signalEnd.
+          if (chunk && typeof chunk === "object") {
+            const toolCallChunk = chunk as {
+              message_type?: unknown;
+              name?: unknown;
+              tool_call?: {
+                function?: {
+                  name?: unknown;
+                  arguments?: unknown;
+                };
+              };
+            };
+            if (toolCallChunk.message_type === "tool_call_message") {
+              const toolName =
+                typeof toolCallChunk.name === "string"
+                  ? toolCallChunk.name
+                  : typeof toolCallChunk.tool_call?.function?.name ===
+                      "string"
+                    ? toolCallChunk.tool_call.function.name
+                    : "(unknown)";
+
+              // Extract tool arguments for budget heavy-bash classification.
+              let toolArgs: Record<string, unknown> | undefined;
+              const rawArgs = toolCallChunk.tool_call?.function?.arguments;
+              if (typeof rawArgs === "string") {
+                try {
+                  toolArgs = JSON.parse(rawArgs);
+                } catch {
+                  toolArgs = { command: rawArgs };
+                }
+              } else if (typeof rawArgs === "object" && rawArgs !== null) {
+                toolArgs = rawArgs as Record<string, unknown>;
+              }
+
+              console.log(`[Channels] routed tool_call: ${toolName}`);
+
+              // Record tool call against budget; block + signalEnd if exceeded.
+              if (turnBudget) {
+                const toolSources = (msg.channelTurnSources ?? []).filter(
+                  isWhatsAppSource,
+                );
+                const allowed = recordToolCall(
+                  turnBudget,
+                  toolName,
+                  toolArgs,
+                  toolSources,
+                );
+                if (!allowed) {
+                  console.log(
+                    `[Channels] routed budget blocked tool: ${toolName}`,
+                  );
+                  const state = turnBudget.getState();
+                  const reason =
+                    state.blockedReason ?? "budget_tool_calls_exceeded";
+                  channelLiveness?.signalEnd(
+                    reason as
+                      | "budget_heavy_bash_exceeded"
+                      | "budget_tool_calls_exceeded"
+                      | "budget_elapsed_exceeded",
+                  );
+                }
+              }
+
+              // Signal liveness — MessageChannel tools handled separately.
+              const toolCategory = classifyToolCategory(toolName);
+              if (
+                toolName === "MessageChannel" ||
+                toolName === "message_channel"
+              ) {
+                channelLiveness?.signalStrong(
+                  "message_channel_tool_call",
+                  toolCategory,
+                );
+              } else {
+                channelLiveness?.signalStrong("tool_call_message", toolCategory);
+              }
+            }
+          }
+
           if (shouldOutput) {
             const normalizedChunk = normalizeToolReturnWireMessage(
               chunk as unknown as Record<string, unknown>,
@@ -814,6 +951,8 @@ export async function handleIncomingMessage(
             console.log(
               `[Channels] end_turn on routed turn — agent=${agentId} conv=${conversationId} (MessageChannel was seen, marking completed)`,
             );
+            // Note outbound sent — cancel auto-progress timer
+            noteOutboundSent(turnBudget);
             channelLiveness?.complete();
           } else {
             console.log(
@@ -1365,6 +1504,9 @@ export async function handleIncomingMessage(
     } catch {
       // Best-effort cleanup only. Never let teardown obscure the turn result.
     }
+
+    // Destroy budget timers/resources if budget was active
+    turnBudget?.destroy();
 
     runtime.activeAbortController = null;
     runtime.cancelRequested = false;
