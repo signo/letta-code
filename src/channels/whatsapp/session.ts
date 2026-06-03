@@ -1,5 +1,5 @@
 import { mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
-import { homedir } from "node:os";
+import { homedir, hostname } from "node:os";
 import { join } from "node:path";
 import type { QrCodeTerminalModule } from "./runtime";
 import { loadQrCodeTerminalModule, loadWhatsAppModule } from "./runtime";
@@ -123,17 +123,27 @@ function defaultIsProcessAlive(pid: number): boolean {
   }
 }
 
-function readLeaseOwner(lockDir: string): { pid?: number; command?: string } {
+function readLeaseOwner(lockDir: string): {
+  pid?: number;
+  command?: string;
+  hostname?: string;
+  containerId?: string;
+} {
   try {
     const owner = JSON.parse(
       readFileSync(join(lockDir, "owner.json"), "utf8"),
     ) as {
       pid?: unknown;
       command?: unknown;
+      hostname?: unknown;
+      containerId?: unknown;
     };
     return {
       pid: typeof owner.pid === "number" ? owner.pid : undefined,
       command: typeof owner.command === "string" ? owner.command : undefined,
+      hostname: typeof owner.hostname === "string" ? owner.hostname : undefined,
+      containerId:
+        typeof owner.containerId === "string" ? owner.containerId : undefined,
     };
   } catch {
     return {};
@@ -169,6 +179,8 @@ export function acquireWhatsAppSessionLease(
             pid,
             command: process.argv.join(" "),
             createdAt: new Date().toISOString(),
+            hostname: hostname(),
+            containerId: process.env.CONTAINER_ID ?? null,
           },
           null,
           2,
@@ -192,7 +204,26 @@ export function acquireWhatsAppSessionLease(
         throw error;
       }
       const owner = readLeaseOwner(lockDir);
-      if (owner.pid && !isProcessAlive(owner.pid)) {
+      // Stale lock detection: release locks from different hosts or reused PID 1.
+      // Two signals make a lock stale regardless of PID liveness:
+      // 1. hostname mismatch (different machine or container restart)
+      // 2. containerId mismatch (different container instance, even same hostname)
+      const hostnameMatches = !owner.hostname || owner.hostname === hostname();
+      // Only enforce containerId mismatch as stale when BOTH lock and current
+      // process have containerId set. If the lock predates containerId tracking
+      // (containerId is null) and this process has CONTAINER_ID, we cannot
+      // assume the lock is stale — the previous process may simply have been
+      // started before containerId was introduced.
+      const containerIdMatches = !owner.containerId
+        ? true // Lock predates containerId tracking — trust PID liveness
+        : !process.env.CONTAINER_ID
+          ? false // Lock has containerId but current process doesn't — can't confirm identity
+          : owner.containerId === process.env.CONTAINER_ID;
+      const isStaleLock = !hostnameMatches || !containerIdMatches;
+      const pidIsAlive = owner.pid && isProcessAlive(owner.pid);
+      // Treat EPERM on PID 1 as "alive" only when hostname+containerId match
+      // (same container still owns the lock). Otherwise treat as stale.
+      if (isStaleLock || (owner.pid && !pidIsAlive)) {
         rmSync(lockDir, { recursive: true, force: true });
         continue;
       }
