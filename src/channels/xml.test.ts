@@ -153,6 +153,9 @@ describe("formatChannelNotification", () => {
     expect(reminder).toContain("Ogg/Opus");
     expect(reminder).toContain(".ogg");
     expect(reminder).toContain("not MP3/M4A/WAV");
+    expect(reminder).toContain("use chat_id with the full WhatsApp JID");
+    expect(reminder).toContain("do not use target");
+    expect(reminder).toContain("media is required");
   });
 
   test("escapes XML special characters in notification text without over-escaping quotes", () => {

@@ -11,11 +11,11 @@
     },
     "chat_id": {
       "type": "string",
-      "description": "The chat/conversation ID to reply to (usually from the channel-notification attributes). Use this for replies in the current routed chat."
+      "description": "The chat/conversation ID to reply to (usually from the channel-notification attributes). Use this for replies in the current routed chat. For WhatsApp proactive sends, use the full WhatsApp JID here (for example '584149145006@s.whatsapp.net') and pass accountId."
     },
     "target": {
       "type": "string",
-      "description": "Explicit outbound target for proactive sends on supported channels (for example, a Slack channel like '#general' or 'channel:C12345678', or a Slack user DM like 'user:U12345678')."
+      "description": "Explicit outbound target for proactive sends on supported channels (for example, a Slack channel like '#general' or 'channel:C12345678', or a Slack user DM like 'user:U12345678'). Do not use target for WhatsApp; use chat_id with the WhatsApp JID instead."
     },
     "accountId": {
       "type": "string",
@@ -47,7 +47,7 @@
     },
     "media": {
       "type": "string",
-      "description": "Absolute local file path for action='upload-file'."
+      "description": "Required absolute local file path for action='upload-file'."
     },
     "filename": {
       "type": "string",

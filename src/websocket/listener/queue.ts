@@ -534,13 +534,14 @@ async function drainQueuedMessages(
 
       let turnError: string | undefined;
       let didThrow = false;
+      let pendingError: unknown;
       runtime.activeChannelTurnSources = channelTurnSources;
       try {
         await processQueuedTurn(queuedTurn, dequeuedBatch);
       } catch (error) {
         didThrow = true;
         turnError = error instanceof Error ? error.message : String(error);
-        throw error;
+        pendingError = error;
       } finally {
         runtime.activeChannelTurnSources = null;
         if (channelTurnSources.length > 0) {
@@ -561,13 +562,44 @@ async function drainQueuedMessages(
             ...(lifecycleError ? { error: lifecycleError } : {}),
           });
         }
+
+        // ── Post-turn drain (error path only) ─────────────────────────────────────────
+        // After the turn finally closes and an error was thrown: if items remain,
+        // exit the pump so scheduleQueuePump can re-enter on a fresh call stack.
+        // On success with remaining items: do nothing.  Let the while loop
+        // continue naturally — queuePumpActive stays true, no double-pump window.
+        if (
+          pendingError !== undefined &&
+          runtime.listener === getActiveRuntime() &&
+          !runtime.listener.intentionallyClosed
+        ) {
+          const remaining = runtime.queueRuntime.peek();
+          if (remaining.length > 0) {
+            runtime.queuePumpActive = false;
+            console.warn(
+              `[Channels] turn error during drain resumption (${remaining.length} pending):`,
+              pendingError instanceof Error
+                ? pendingError.message
+                : String(pendingError),
+            );
+            scheduleQueuePump(runtime, socket, opts, processQueuedTurn);
+          }
+        }
       }
+
+      // Success path: while loop continues with queuePumpActive still true.
+      // Error path: we reach here only when pendingError is undefined (no error)
+      // or when pendingError triggered scheduleQueuePump above.
       emitListenerStatus(
         runtime.listener,
         opts.onStatusChange,
         opts.connectionId,
       );
-      evictConversationRuntimeIfIdle(runtime);
+
+      // Rethrow after scheduleQueuePump so queued items are not stranded.
+      if (pendingError !== undefined) {
+        throw pendingError;
+      }
     }
   } finally {
     runtime.queuePumpActive = false;

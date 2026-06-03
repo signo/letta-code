@@ -171,6 +171,12 @@ export type ChannelTurnLivenessEvent =
       batchId: string;
       sources: ChannelTurnSource[];
       toolCategory: ToolCategory;
+    }
+  | {
+      type: "queued_feedback";
+      sources: ChannelTurnSource[];
+      /** Number of queued messages (>= 1) for this route. */
+      queuedCount: number;
     };
 
 // ── Adapter interface ─────────────────────────────────────────────

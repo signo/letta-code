@@ -8,6 +8,8 @@ There are two supported send modes:
 - Reply mode: use `channel` + `chat_id` from the notification to respond in the current routed chat.
 - Proactive mode: use `channel` + `target` on supported channels to send to an explicit outbound destination.
 
+WhatsApp proactive sends are different: use `chat_id` with the full WhatsApp JID (for example `584149145006@s.whatsapp.net`) and pass `accountId` for the WhatsApp account. Do not use `target` for WhatsApp.
+
 Preferred reply pattern:
 - `action="send"` to send a normal reply
 - `channel` + `chat_id` from the notification attributes
@@ -31,5 +33,6 @@ Parameters:
 Rules:
 - Always pass `action` explicitly, even for a normal reply.
 - Pass exactly one of `chat_id` or `target`.
+- For WhatsApp, always use `chat_id`; `target` is for channels that explicitly support target resolution such as Slack.
 - `react` should be its own call.
-- `upload-file` can include both `media` and `message` so the uploaded file has a caption/comment when the channel supports it.
+- `upload-file` requires `media` as an absolute local file path. It can also include `message` so the uploaded file has a caption/comment when the channel supports it.
