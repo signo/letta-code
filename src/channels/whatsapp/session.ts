@@ -175,14 +175,19 @@ interface ProcessStartInfo {
  *
  * After slicing from the last ')' to skip the comm field, the fields are
  * (0-indexed; confirmed against /proc/1/stat on this system):
- *   fields[18] = 1-based field 19 = itrealvalue (always 0 in modern kernels)
- *   fields[19] = 1-based field 20 = itrealvalue (always 0)
- *   fields[20] = 1-based field 21 = starttime (clock ticks since boot)  ← TARGET
- *   fields[21] = 1-based field 22 = RSS (changes as memory varies — NOT identity)
+ *   fields[17] = 1-based field 20 = num_threads
+ *   fields[18] = 1-based field 21 = itrealvalue (always 0 in modern kernels)
+ *   fields[19] = 1-based field 22 = starttime (clock ticks since boot)  ← TARGET
+ *   fields[20] = 1-based field 23 = vsize
+ *   fields[21] = 1-based field 24 = RSS (changes as memory varies — NOT identity)
  *
- * The prior bug: code read fields[21] (RSS) or fields[19] (itrealvalue)
- * instead of fields[20] (starttime). RSS changes at runtime; itrealvalue is
- * always near 0. Only starttime at fields[20] is stable and valid for identity.
+ * NOTE: starttime for PID 1 can be small (tens/hundreds) since PID 1 starts
+ * near boot. Do NOT assume starttime must be a large number — that is invalid
+ * for PID 1. Use field position (fields[19]), not value magnitude, to identify
+ * the starttime field.
+ *
+ * The prior bug: code read fields[20] (vsize) or fields[21] (RSS) — neither
+ * is stable or correct as identity. Only fields[19] (starttime) is valid.
  *
  * Returns null if the starttime field is absent or whitespace.
  * Exported for direct unit-testing without needing a real PID.
@@ -190,9 +195,12 @@ interface ProcessStartInfo {
 export function parseProcStatStartTime(statLine: string): string | null {
   const lastParen = statLine.lastIndexOf(")");
   if (lastParen === -1) return null;
-  const fields = statLine.slice(lastParen + 2).split(" ");
-  // fields[20] = starttime (1-based field 21).
-  const token = fields[20];
+  const fields = statLine
+    .slice(lastParen + 2)
+    .trim()
+    .split(/\s+/);
+  // fields[19] = starttime (1-based field 22).
+  const token = fields[19];
   if (!token || token.trim() === "") return null;
   return token;
 }
