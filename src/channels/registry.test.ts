@@ -1,4 +1,11 @@
-import { afterEach, beforeEach, describe, expect, test } from "bun:test";
+import {
+  afterEach,
+  beforeAll,
+  beforeEach,
+  describe,
+  expect,
+  test,
+} from "bun:test";
 import {
   __testOverrideLoadChannelAccounts,
   __testOverrideSaveChannelAccounts,
@@ -18,6 +25,7 @@ import {
   clearPendingControlRequestStore,
 } from "@/channels/pending-control-requests";
 import {
+  buildChannelTurnSource,
   buildSlackConversationSummary,
   ChannelInitializationError,
   ChannelRegistry,
@@ -1464,5 +1472,506 @@ describe("pending channel control requests", () => {
     registry.clearPendingControlRequest("req-ask-1");
 
     expect(saveSnapshots.at(-1)).toEqual({ requests: [] });
+  });
+});
+
+describe("buildChannelTurnSource", () => {
+  test("preserves resolvedPhoneJid from inbound WhatsApp direct message into ChannelTurnSource", () => {
+    const route = {
+      agentId: "agent-test",
+      conversationId: "conv-test",
+      channel: "whatsapp" as const,
+      accountId: "acct-wa",
+      chatId: "210565536456917@lid",
+      chatType: "direct" as const,
+      enabled: true,
+      createdAt: "2024-01-01T00:00:00.000Z",
+    };
+
+    const inbound: InboundChannelMessage = {
+      channel: "whatsapp",
+      accountId: "acct-wa",
+      chatId: "210565536456917@lid", // LID
+      senderId: "34600216777",
+      senderName: "Alice",
+      text: "hello",
+      timestamp: Date.now(),
+      messageId: "msg-inbound",
+      chatType: "direct",
+      resolvedPhoneJid: "34600216777@s.whatsapp.net", // resolved phone JID
+    };
+
+    const source = buildChannelTurnSource(route, inbound);
+
+    expect(source.chatId).toBe("210565536456917@lid");
+    expect(source.resolvedPhoneJid).toBe("34600216777@s.whatsapp.net");
+    expect(source.channel).toBe("whatsapp");
+    expect(source.agentId).toBe("agent-test");
+  });
+
+  test("resolvedPhoneJid is undefined when not present in inbound message", () => {
+    const route = {
+      agentId: "agent-test",
+      conversationId: "conv-test",
+      channel: "slack" as const,
+      accountId: "acct-slack",
+      chatId: "C456",
+      chatType: "channel" as const,
+      enabled: true,
+      createdAt: "2024-01-01T00:00:00.000Z",
+    };
+
+    const inbound = {
+      channel: "slack",
+      accountId: "acct-slack",
+      chatId: "C456",
+      senderId: "U001",
+      senderName: "Bob",
+      text: "hello",
+      timestamp: Date.now(),
+      messageId: "msg-1",
+      chatType: "channel" as const,
+    };
+
+    const source = buildChannelTurnSource(route, inbound);
+    expect(source.resolvedPhoneJid).toBeUndefined();
+    expect(source.chatId).toBe("C456");
+  });
+});
+
+describe("shouldAutoApproveChannelMessageTool — LID-to-phone-JID resolution", () => {
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  type RuntimeSource = {
+    channel: string;
+    chatId: string;
+    resolvedPhoneJid?: string;
+    accountId?: string;
+    agentId: string;
+    conversationId: string;
+  };
+  type Runtime = { activeChannelTurnSources: RuntimeSource[] };
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  let shouldAutoApproveChannelMessageTool: (params: {
+    runtime: Runtime;
+    toolName: string;
+    toolArgs?: string;
+  }) => boolean;
+
+  beforeAll(async () => {
+    const mod = (await import("@/websocket/listener/turn-approval")) as any;
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    shouldAutoApproveChannelMessageTool =
+      mod.shouldAutoApproveChannelMessageTool as any;
+  });
+
+  function makeRuntime(sources: RuntimeSource[]) {
+    return { activeChannelTurnSources: sources };
+  }
+
+  test("auto-approves MessageChannel when source.chatId is LID and args.chat_id is resolvedPhoneJid", () => {
+    const runtime = makeRuntime([
+      {
+        channel: "whatsapp",
+        accountId: "acct-wa",
+        chatId: "210565536456917@lid",
+        resolvedPhoneJid: "34600216777@s.whatsapp.net",
+        agentId: "agent-1",
+        conversationId: "conv-1",
+      },
+    ]);
+
+    const result = shouldAutoApproveChannelMessageTool({
+      runtime,
+      toolName: "MessageChannel",
+      toolArgs: JSON.stringify({
+        channel: "whatsapp",
+        chat_id: "34600216777@s.whatsapp.net",
+        text: "Hello",
+      }),
+    });
+
+    expect(result).toBe(true);
+  });
+
+  test("auto-approves MessageChannel when args.chat_id matches source.chatId directly (LID)", () => {
+    const runtime = makeRuntime([
+      {
+        channel: "whatsapp",
+        accountId: "acct-wa",
+        chatId: "210565536456917@lid",
+        resolvedPhoneJid: "34600216777@s.whatsapp.net",
+        agentId: "agent-1",
+        conversationId: "conv-1",
+      },
+    ]);
+
+    const result = shouldAutoApproveChannelMessageTool({
+      runtime,
+      toolName: "MessageChannel",
+      toolArgs: JSON.stringify({
+        channel: "whatsapp",
+        chat_id: "210565536456917@lid",
+      }),
+    });
+
+    expect(result).toBe(true);
+  });
+
+  test("auto-approves MessageChannel when args use target_chat_id with resolvedPhoneJid", () => {
+    const runtime = makeRuntime([
+      {
+        channel: "whatsapp",
+        accountId: "acct-wa",
+        chatId: "210565536456917@lid",
+        resolvedPhoneJid: "34600216777@s.whatsapp.net",
+        agentId: "agent-1",
+        conversationId: "conv-1",
+      },
+    ]);
+
+    const result = shouldAutoApproveChannelMessageTool({
+      runtime,
+      toolName: "MessageChannel",
+      toolArgs: JSON.stringify({
+        channel: "whatsapp",
+        target_chat_id: "34600216777@s.whatsapp.net",
+      }),
+    });
+
+    expect(result).toBe(true);
+  });
+
+  test("rejects MessageChannel when args.chat_id does not match source.chatId or resolvedPhoneJid", () => {
+    const runtime = makeRuntime([
+      {
+        channel: "whatsapp",
+        accountId: "acct-wa",
+        chatId: "210565536456917@lid",
+        resolvedPhoneJid: "34600216777@s.whatsapp.net",
+        agentId: "agent-1",
+        conversationId: "conv-1",
+      },
+    ]);
+
+    const result = shouldAutoApproveChannelMessageTool({
+      runtime,
+      toolName: "MessageChannel",
+      toolArgs: JSON.stringify({
+        channel: "whatsapp",
+        chat_id: "99999999999@s.whatsapp.net",
+      }),
+    });
+
+    expect(result).toBe(false);
+  });
+
+  test("rejects when args.chat_id is absent (strict — require explicit chat_id)", () => {
+    const runtime = makeRuntime([
+      {
+        channel: "whatsapp",
+        accountId: "acct-wa",
+        chatId: "210565536456917@lid",
+        resolvedPhoneJid: "34600216777@s.whatsapp.net",
+        agentId: "agent-1",
+        conversationId: "conv-1",
+      },
+    ]);
+
+    // chat_id not in args
+    const result = shouldAutoApproveChannelMessageTool({
+      runtime,
+      toolName: "MessageChannel",
+      toolArgs: JSON.stringify({ channel: "whatsapp", text: "Hello" }),
+    });
+
+    expect(result).toBe(false);
+  });
+
+  test("rejects when toolArgs is missing/empty (strict by default)", () => {
+    const runtime = makeRuntime([
+      {
+        channel: "whatsapp",
+        accountId: "acct-wa",
+        chatId: "210565536456917@lid",
+        resolvedPhoneJid: "34600216777@s.whatsapp.net",
+        agentId: "agent-1",
+        conversationId: "conv-1",
+      },
+    ]);
+
+    expect(
+      shouldAutoApproveChannelMessageTool({
+        runtime,
+        toolName: "MessageChannel",
+        toolArgs: undefined,
+      }),
+    ).toBe(false);
+    expect(
+      shouldAutoApproveChannelMessageTool({
+        runtime,
+        toolName: "MessageChannel",
+        toolArgs: "",
+      }),
+    ).toBe(false);
+  });
+
+  test("rejects on channel mismatch", () => {
+    const runtime = makeRuntime([
+      {
+        channel: "whatsapp",
+        accountId: "acct-wa",
+        chatId: "210565536456917@lid",
+        resolvedPhoneJid: "34600216777@s.whatsapp.net",
+        agentId: "agent-1",
+        conversationId: "conv-1",
+      },
+    ]);
+
+    const result = shouldAutoApproveChannelMessageTool({
+      runtime,
+      toolName: "MessageChannel",
+      toolArgs: JSON.stringify({
+        channel: "slack",
+        chat_id: "210565536456917@lid",
+      }),
+    });
+
+    expect(result).toBe(false);
+  });
+
+  test("rejects non-MessageChannel tools", () => {
+    const runtime = makeRuntime([
+      {
+        channel: "whatsapp",
+        accountId: "acct-wa",
+        chatId: "210565536456917@lid",
+        resolvedPhoneJid: "34600216777@s.whatsapp.net",
+        agentId: "agent-1",
+        conversationId: "conv-1",
+      },
+    ]);
+
+    expect(
+      shouldAutoApproveChannelMessageTool({
+        runtime,
+        toolName: "Bash",
+        toolArgs: "{}",
+      }),
+    ).toBe(false);
+    expect(
+      shouldAutoApproveChannelMessageTool({
+        runtime,
+        toolName: "Read",
+        toolArgs: "{}",
+      }),
+    ).toBe(false);
+  });
+
+  test("no source found — rejects", () => {
+    const runtime = makeRuntime([]);
+
+    expect(
+      shouldAutoApproveChannelMessageTool({
+        runtime,
+        toolName: "MessageChannel",
+        toolArgs: JSON.stringify({
+          channel: "whatsapp",
+          chat_id: "34600216777@s.whatsapp.net",
+        }),
+      }),
+    ).toBe(false);
+  });
+});
+
+describe("WhatsApp adapter — resolveInboundChatId returns LID + resolvedPhoneJid (via buildChannelTurnSource)", () => {
+  /**
+   * These tests verify the LID-to-phone-JID resolution model end-to-end
+   * via the public buildChannelTurnSource API and shouldAutoApproveChannelMessageTool.
+   *
+   * The model is:
+   *   - Route stores LID as chatId.
+   *   - Adapter carries resolvedPhoneJid in InboundChannelMessage.
+   *   - buildChannelTurnSource propagates both into ChannelTurnSource.
+   *   - shouldAutoApproveChannelMessageTool matches MessageChannel args against
+   *     either LID or resolvedPhoneJid.
+   *
+   * We test this without touching adapter internals by constructing the
+   * wire format (InboundChannelMessage → ChannelTurnSource → auto-approval hit)
+   * directly.
+   */
+
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  let shouldAutoApproveChannelMessageTool: (params: {
+    runtime: {
+      activeChannelTurnSources: Array<{
+        channel: string;
+        chatId: string;
+        resolvedPhoneJid?: string;
+        accountId?: string;
+        agentId: string;
+        conversationId: string;
+      }>;
+    };
+    toolName: string;
+    toolArgs?: string;
+  }) => boolean;
+
+  beforeAll(async () => {
+    const mod = (await import("@/websocket/listener/turn-approval")) as any;
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    shouldAutoApproveChannelMessageTool =
+      mod.shouldAutoApproveChannelMessageTool as any;
+  });
+
+  test("buildChannelTurnSource propagates LID chatId and resolvedPhoneJid from inbound WhatsApp DM", () => {
+    // Simulate the adapter's buildChannelTurnSource result for a LID-routed DM.
+    // This is exactly what the wire delivers: LID as chatId, phone JID as resolvedPhoneJid.
+    const route = {
+      agentId: "agent-samantha",
+      conversationId: "conv-wa-samantha",
+      channel: "whatsapp",
+      accountId: "acct-wa",
+      chatId: "210565536456917@lid",
+      chatType: "direct" as const,
+      enabled: true,
+      createdAt: "2024-01-01T00:00:00.000Z",
+    };
+
+    const inbound: InboundChannelMessage = {
+      channel: "whatsapp",
+      accountId: "acct-wa",
+      chatId: "210565536456917@lid", // the LID from route
+      senderId: "34600216777",
+      senderName: "Alice",
+      text: "hello",
+      timestamp: Date.now(),
+      messageId: "msg-inbound",
+      chatType: "direct",
+      // resolvedPhoneJid is set by adapter when LID resolves
+      resolvedPhoneJid: "34600216777@s.whatsapp.net",
+    };
+
+    const source = buildChannelTurnSource(route, inbound);
+
+    // The turn source carries both: LID for route-matching, phone JID for auto-approval.
+    expect(source.chatId).toBe("210565536456917@lid"); // LID in route
+    expect(source.resolvedPhoneJid).toBe("34600216777@s.whatsapp.net"); // phone JID from adapter
+    expect(source.channel).toBe("whatsapp");
+    expect(source.agentId).toBe("agent-samantha");
+  });
+
+  test("shouldAutoApproveChannelMessageTool — exact failure path: LLM sends phone JID, route has LID, no resolvedPhoneJid in source", () => {
+    // This is the exact failure scenario: adapter forgot to carry resolvedPhoneJid.
+    // Without it, auto-approval fails even though LLM sent the correct phone JID.
+    const runtime = {
+      activeChannelTurnSources: [
+        {
+          channel: "whatsapp",
+          accountId: "acct-wa",
+          chatId: "210565536456917@lid", // route has LID
+          // resolvedPhoneJid is MISSING (the defect)
+          agentId: "agent-samantha",
+          conversationId: "conv-wa-samantha",
+        },
+      ],
+    };
+
+    // LLM calls MessageChannel with the resolved phone JID — the correct address
+    const result = shouldAutoApproveChannelMessageTool({
+      runtime,
+      toolName: "MessageChannel",
+      toolArgs: JSON.stringify({
+        channel: "whatsapp",
+        chat_id: "34600216777@s.whatsapp.net",
+      }),
+    });
+
+    // Without resolvedPhoneJid in source, this must NOT be auto-approved.
+    // (Actually correct behavior since we don't know the mapping is valid.)
+    expect(result).toBe(false);
+  });
+
+  test("shouldAutoApproveChannelMessageTool — happy path: LLM sends phone JID, route has LID, source carries resolvedPhoneJid", () => {
+    // The correct state after the fix: source carries both LID and resolved phone JID.
+    const runtime = {
+      activeChannelTurnSources: [
+        {
+          channel: "whatsapp",
+          accountId: "acct-wa",
+          chatId: "210565536456917@lid", // route stores LID
+          resolvedPhoneJid: "34600216777@s.whatsapp.net", // adapter resolved this
+          agentId: "agent-samantha",
+          conversationId: "conv-wa-samantha",
+        },
+      ],
+    };
+
+    // LLM calls MessageChannel with the phone JID instead of the LID
+    const result = shouldAutoApproveChannelMessageTool({
+      runtime,
+      toolName: "MessageChannel",
+      toolArgs: JSON.stringify({
+        channel: "whatsapp",
+        chat_id: "34600216777@s.whatsapp.net",
+      }),
+    });
+
+    // This MUST be auto-approved after the fix — the source knows the mapping.
+    expect(result).toBe(true);
+  });
+
+  test("shouldAutoApproveChannelMessageTool — LLM sends LID, route has LID (both match directly)", () => {
+    // LLM sends the LID directly — this also works.
+    const runtime = {
+      activeChannelTurnSources: [
+        {
+          channel: "whatsapp",
+          accountId: "acct-wa",
+          chatId: "210565536456917@lid",
+          resolvedPhoneJid: "34600216777@s.whatsapp.net",
+          agentId: "agent-samantha",
+          conversationId: "conv-wa-samantha",
+        },
+      ],
+    };
+
+    const result = shouldAutoApproveChannelMessageTool({
+      runtime,
+      toolName: "MessageChannel",
+      toolArgs: JSON.stringify({
+        channel: "whatsapp",
+        chat_id: "210565536456917@lid",
+      }),
+    });
+
+    expect(result).toBe(true);
+  });
+
+  test("shouldAutoApproveChannelMessageTool — group message: resolvedPhoneJid is absent, auto-approval checks LID route only", () => {
+    // Groups: no LID, no resolvedPhoneJid — only the group chatId in route.
+    const runtime = {
+      activeChannelTurnSources: [
+        {
+          channel: "whatsapp",
+          accountId: "acct-wa",
+          chatId: "123456789@g.us", // group JID
+          // resolvedPhoneJid is absent (groups never have it)
+          agentId: "agent-samantha",
+          conversationId: "conv-wa-samantha",
+        },
+      ],
+    };
+
+    // LLM sends the group JID
+    const result = shouldAutoApproveChannelMessageTool({
+      runtime,
+      toolName: "MessageChannel",
+      toolArgs: JSON.stringify({
+        channel: "whatsapp",
+        chat_id: "123456789@g.us",
+      }),
+    });
+
+    expect(result).toBe(true);
   });
 });

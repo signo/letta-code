@@ -256,11 +256,17 @@ function buildWhatsAppConversationSummary(
   return `[WhatsApp] Group${channelLabel || ` ${msg.chatId}`}`;
 }
 
-function buildChannelTurnSource(
+export function buildChannelTurnSource(
   route: ChannelRoute,
   msg: Pick<
     InboundChannelMessage,
-    "channel" | "accountId" | "chatId" | "chatType" | "messageId" | "threadId"
+    | "channel"
+    | "accountId"
+    | "chatId"
+    | "chatType"
+    | "messageId"
+    | "threadId"
+    | "resolvedPhoneJid"
   >,
 ): ChannelTurnSource {
   return {
@@ -272,6 +278,7 @@ function buildChannelTurnSource(
     threadId: msg.threadId,
     agentId: route.agentId,
     conversationId: route.conversationId,
+    resolvedPhoneJid: msg.resolvedPhoneJid ?? undefined,
   };
 }
 

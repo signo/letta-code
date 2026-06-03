@@ -278,6 +278,13 @@ export interface InboundChannelMessage {
   messageId?: string;
   /** Canonical thread identifier used for route selection, when applicable. */
   threadId?: string | null;
+  /**
+   * WhatsApp-specific: the resolved phone JID for a LID-routed DM.
+   * Set by the WhatsApp adapter so that turn-approval can match
+   * MessageChannel tool calls that use the phone JID instead of the LID.
+   * Omitted for groups and unresolved LIDs (null → absent).
+   */
+  resolvedPhoneJid?: string;
   /** Raw platform-specific event data for future use. */
   raw?: unknown;
   /** Broad chat surface type used for routing/pairing decisions. */

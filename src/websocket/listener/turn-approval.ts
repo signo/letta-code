@@ -10,13 +10,16 @@ import {
 } from "@/agent/approval-execution";
 import { getChannelAccount } from "@/channels/accounts";
 import { getChannelRegistry } from "@/channels/registry";
-import { isWhatsAppChannelAccount, type ChannelTurnSource } from "@/channels/types";
 import {
   evaluateToolPolicy,
   formatToolPolicyDenial,
   type ToolPolicy,
 } from "@/channels/toolPolicy";
 import { classifyToolCategory } from "@/channels/turnLiveness";
+import {
+  type ChannelTurnSource,
+  isWhatsAppChannelAccount,
+} from "@/channels/types";
 import { computeDiffPreviews } from "@/helpers/diff-preview";
 import { formatPermissionDenial } from "@/permissions/format-denial";
 import {
@@ -183,24 +186,65 @@ export function shouldAutoApproveChannelMessageTool(params: {
     return false;
   }
 
-  if (params.toolArgs) {
-    try {
-      const args = JSON.parse(params.toolArgs) as {
-        channel?: string;
-        chat_id?: string;
-        target_chat_id?: string;
-      };
-      if (args.channel && args.channel !== source.channel) return false;
-      if (args.chat_id && args.chat_id !== source.chatId) return false;
-      if (args.target_chat_id && args.target_chat_id !== source.chatId)
-        return false;
-    } catch {
-      // Invalid JSON — don't block auto-approval on parse failure;
-      // the tool execution will fail if args are wrong.
-    }
+  if (!params.toolArgs) {
+    // Reject silently — require explicit args for safety.
+    return false;
   }
 
-  return true;
+  try {
+    const args = JSON.parse(params.toolArgs) as Record<string, unknown>;
+    const argChannel = typeof args.channel === "string" ? args.channel : null;
+    const argChatId = typeof args.chat_id === "string" ? args.chat_id : null;
+    // target_chat_id is accepted as a fallback (some tool invocations use it).
+    const argTargetChatId =
+      typeof args.target_chat_id === "string" ? args.target_chat_id : null;
+    const resolvedArgChatId = argChatId ?? argTargetChatId;
+
+    // Reject on channel mismatch.
+    if (argChannel !== null && argChannel !== source.channel) {
+      return false;
+    }
+
+    // Require an explicit chat_id or target_chat_id (strict by default).
+    if (resolvedArgChatId === null) {
+      return false;
+    }
+
+    // Match against LID (source.chatId) and resolved phone JID.
+    // This covers the case where the LLM sends the phone JID for a LID-routed
+    // WhatsApp DM — the route stores the LID but the session knows the phone JID.
+    if (!matchChatIdToSource(source, resolvedArgChatId)) {
+      return false;
+    }
+
+    return true;
+  } catch {
+    // Malformed JSON — let normal approval path reject it.
+    return false;
+  }
+}
+
+/**
+ * Check if the provided chat_id matches the turn source, accounting for
+ * WhatsApp LID-to-phone-JID resolution.
+ *
+ * Accept the arg if it matches any of:
+ * 1. source.chatId (direct equality — the LID or native chat ID)
+ * 2. source.resolvedPhoneJid (normalized equality — the resolved phone JID)
+ *
+ * Both comparisons use exact string equality — no fuzzy/digit-prefix matching.
+ */
+function matchChatIdToSource(
+  source: { chatId: string; resolvedPhoneJid?: string },
+  providedChatId: string,
+): boolean {
+  if (source.chatId === providedChatId) {
+    return true;
+  }
+  if (source.resolvedPhoneJid && source.resolvedPhoneJid === providedChatId) {
+    return true;
+  }
+  return false;
 }
 
 export async function handleApprovalStop(params: {
@@ -225,7 +269,9 @@ export async function handleApprovalStop(params: {
     typeof sendApprovalContinuationWithRetry
   >[2];
   providerFallback?: ProviderFallbackState;
-  channelLiveness?: import("@/channels/turnLiveness").ChannelTurnLiveness | null;
+  channelLiveness?:
+    | import("@/channels/turnLiveness").ChannelTurnLiveness
+    | null;
 }): Promise<ApprovalBranchResult> {
   const {
     approvals,
@@ -306,7 +352,10 @@ export async function handleApprovalStop(params: {
     );
     // Signal liveness for MessageChannel — these don't produce tool_call_message
     // stream chunks so the drain-callback path never fires; signal here instead.
-    channelLiveness?.signalStrong("message_channel_tool_call", "message_channel");
+    channelLiveness?.signalStrong(
+      "message_channel_tool_call",
+      "message_channel",
+    );
   }
 
   // Apply per-account tool policy for channel turns (WhatsApp only in Phase 2).
@@ -319,9 +368,9 @@ export async function handleApprovalStop(params: {
 
   if (toolPolicy) {
     for (const approval of approvals) {
-      if (channelAutoAllowed.some(
-        (a) => a.toolCallId === approval.toolCallId,
-      )) {
+      if (
+        channelAutoAllowed.some((a) => a.toolCallId === approval.toolCallId)
+      ) {
         continue; // Already auto-approved as MessageChannel.
       }
       const decision = evaluateToolPolicy(approval.toolName, toolPolicy);
