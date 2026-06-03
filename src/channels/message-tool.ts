@@ -135,7 +135,13 @@ function buildDynamicMessageChannelDescriptionFromDiscovery(
       ? '\n\nThis tool is currently scoped to a routed external channel turn. Plain assistant text is not delivered to that external user. If a user-visible reply is appropriate, your final action for the turn must be one MessageChannel call with action="send", channel from the notification, chat_id from the notification, and message containing the reply. If no user-visible response is appropriate, do not call MessageChannel and do not send an empty acknowledgement.'
       : "";
 
-  return `${description}${scopedReplyContract}\n\nCurrently active channels: ${channelList}. Available actions across the active channels: ${actionList}. The JSON schema reflects the currently active channel plugins.`;
+  const scopedWhatsAppContract = scope?.channels.some(
+    ({ channelId }) => channelId === "whatsapp",
+  )
+    ? '\n\nWhatsApp note: use chat_id, not target. For proactive WhatsApp sends to another phone/JID, pass chat_id as the full WhatsApp JID and include accountId. For action="upload-file", media is required and must be an absolute local file path.'
+    : "";
+
+  return `${description}${scopedReplyContract}${scopedWhatsAppContract}\n\nCurrently active channels: ${channelList}. Available actions across the active channels: ${actionList}. The JSON schema reflects the currently active channel plugins.`;
 }
 
 export async function resolveMessageChannelToolDiscovery(

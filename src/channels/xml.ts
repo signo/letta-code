@@ -52,7 +52,7 @@ export function buildChannelReminderText(msg: InboundChannelMessage): string {
     `If you should reply to the external user, use MessageChannel with action="send", channel="${escapedChannel}", and chat_id="${escapedChatId}". Put the user-visible reply in message.`,
     "If no user-visible response is appropriate, do not call MessageChannel. Do not send an empty acknowledgement.",
     "Do not produce a plain text assistant response as the user-visible reply.",
-    "On supported channels, MessageChannel can also send proactively using channel + target (and accountId when needed).",
+    "On supported channels, MessageChannel can also send proactively. Some channels use target; WhatsApp uses chat_id with the full WhatsApp JID plus accountId.",
     "Only pass replyTo if you intentionally want the platform's quote/reply UI.",
     `Current local time on this device: ${localTime}`,
     SYSTEM_REMINDER_CLOSE,
@@ -86,7 +86,7 @@ export function buildChannelReminderText(msg: InboundChannelMessage): string {
     lines.splice(
       lines.length - 2,
       0,
-      'On WhatsApp, MessageChannel also supports action="react" with emoji + messageId, and action="upload-file" with media. Voice memo/audio uploads must be Ogg/Opus (.ogg, .oga, or .opus), not MP3/M4A/WAV. Replies are sent as the linked WhatsApp number.',
+      'On WhatsApp, MessageChannel also supports action="react" with emoji + messageId, and action="upload-file" with media. For proactive WhatsApp sends to another phone/JID, use chat_id with the full WhatsApp JID and include accountId; do not use target. For upload-file, media is required and must be an absolute local file path. Voice memo/audio uploads must be Ogg/Opus (.ogg, .oga, or .opus), not MP3/M4A/WAV. Replies are sent as the linked WhatsApp number.',
     );
   }
   if (msg.attachments?.length) {

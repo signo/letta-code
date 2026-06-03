@@ -462,6 +462,26 @@ export async function wireChannelIngress(
       });
     }
 
+    // Send queued feedback to user if route is already active.
+    // Fires for every queued message (including the first). The adapter
+    // throttles via cooldown so repeated dispatches don't spam the user.
+    if (
+      conversationRuntime.queuePumpActive ||
+      conversationRuntime.isProcessing
+    ) {
+      const count = conversationRuntime.queueRuntime.peek().length;
+      if (count >= 1) {
+        void registry.dispatchTurnLivenessEvent({
+          type: "queued_feedback",
+          sources: delivery.turnSources ?? [],
+          queuedCount: count,
+        });
+        console.log(
+          `[Channels] queued routed turn while active (${count} pending)`,
+        );
+      }
+    }
+
     scheduleQueuePump(conversationRuntime, socket, opts, processQueuedTurn);
   });
 

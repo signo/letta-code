@@ -3,6 +3,7 @@ import type {
   ChannelAdapter,
   ChannelControlRequestEvent,
   ChannelTurnLifecycleEvent,
+  ChannelTurnLivenessEvent,
   ChannelTurnSource,
   InboundChannelMessage,
   OutboundChannelMessage,
@@ -207,6 +208,12 @@ export function createWhatsAppAdapter(
   const seenMessageIds = new Set<string>();
   const lidToJid = new Map<string, string>();
   const messageStore = new Map<string, unknown>();
+
+  // Per-key state for feedback throttle: when a message queues while the
+  // turn is active, we send at most one "still processing" feedback per
+  // chat per cooldown period to avoid spamming the user.
+  const queuedFeedbackByKey = new Map<string, { lastFeedbackAt: number }>();
+  const FEEDBACK_COOLDOWN_MS = 60_000; // 1 minute between feedback sends
 
   function rememberSeen(id: string): boolean {
     if (seenMessageIds.has(id)) return true;
@@ -607,32 +614,82 @@ export function createWhatsAppAdapter(
     async handleTurnLifecycleEvent(
       event: ChannelTurnLifecycleEvent,
     ): Promise<void> {
-      if (!running || event.type !== "finished") return;
+      if (!running) return;
 
-      const errorText = event.outcome === "error" ? event.error?.trim() : null;
-      if (!errorText) return;
-
-      const uniqueSources = new Map<string, ChannelTurnSource>();
-      for (const source of event.sources) {
-        const key = getLifecycleErrorReplyKey(source);
-        if (!key || uniqueSources.has(key)) continue;
-        uniqueSources.set(key, source);
+      // Clear queued feedback cooldown only when a turn actually starts or
+      // finishes — NOT on "queued" lifecycle events.  The "queued" event
+      // fires for every inbound message during an active turn (before
+      // the queued_feedback liveness event).  If we cleared the cooldown
+      // here, each new queued message would reset it before
+      // handleTurnLivenessEvent gets a chance to protect it, defeating
+      // the throttle entirely.
+      const sources =
+        event.type === "finished" || event.type === "processing"
+          ? event.sources
+          : [];
+      for (const source of sources) {
+        queuedFeedbackByKey.delete(source.chatId);
       }
 
-      await Promise.all(
-        Array.from(uniqueSources.values()).map(async (source) => {
-          try {
-            await adapter.sendDirectReply(source.chatId, errorText, {
-              replyToMessageId: source.messageId,
-            });
-          } catch (error) {
-            console.warn(
-              `[WhatsApp:${account.accountId}] Failed to send lifecycle error reply for ${source.chatId}:`,
-              error instanceof Error ? error.message : error,
-            );
+      if (event.type === "finished") {
+        const errorText =
+          event.outcome === "error" ? event.error?.trim() : null;
+        if (errorText) {
+          const uniqueSources = new Map<string, ChannelTurnSource>();
+          for (const source of event.sources) {
+            const key = getLifecycleErrorReplyKey(source);
+            if (!key || uniqueSources.has(key)) continue;
+            uniqueSources.set(key, source);
           }
-        }),
-      );
+
+          await Promise.all(
+            Array.from(uniqueSources.values()).map(async (source) => {
+              try {
+                await adapter.sendDirectReply(source.chatId, errorText, {
+                  replyToMessageId: source.messageId,
+                });
+              } catch (error) {
+                console.warn(
+                  `[WhatsApp:${account.accountId}] Failed to send lifecycle error reply for ${source.chatId}:`,
+                  error instanceof Error ? error.message : error,
+                );
+              }
+            }),
+          );
+        }
+      }
+    },
+
+    async handleTurnLivenessEvent(
+      event: ChannelTurnLivenessEvent,
+    ): Promise<void> {
+      if (!running) return;
+      if (event.type === "queued_feedback") {
+        const { sources, queuedCount } = event;
+        if (queuedCount < 1) return;
+
+        const now = Date.now();
+        for (const source of sources) {
+          const fEntry = queuedFeedbackByKey.get(source.chatId);
+          if (fEntry && now - fEntry.lastFeedbackAt < FEEDBACK_COOLDOWN_MS) {
+            continue;
+          }
+
+          const feedbackAfterMs = account.routedTurnAutoProgressAfterMs ?? 7000;
+          if (feedbackAfterMs === 0) continue;
+
+          const feedbackMessage =
+            account.routedTurnAutoProgressMessage ??
+            "Processing your request. I'll update you shortly.";
+
+          try {
+            await sendToWhatsApp(source.chatId, { text: feedbackMessage });
+            queuedFeedbackByKey.set(source.chatId, { lastFeedbackAt: now });
+          } catch {
+            // Feedback failure is non-fatal.
+          }
+        }
+      }
     },
   };
 
