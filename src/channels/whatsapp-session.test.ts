@@ -55,8 +55,9 @@ import {
  *   - Read fields[20] (vsize) → wrong field entirely.
  *   - Assumed starttime must be > 1_000_000 → invalid for PID 1.
  */
-test("parseProcStatStartTime fixture: fields[19] = starttime (22 for PID 1), fields[20] = vsize, fields[21] = RSS", async () => {
+test("parseProcStatStartTime fixture: confirms field layout — fields[19]=starttime, [20]=vsize, [21]=RSS", async () => {
   // Use the real /proc/1/stat line as the fixture — it is the ground truth.
+  // On this system: starttime at fields[19], vsize at fields[20], RSS at fields[21].
   const { readFileSync } = await import("node:fs");
   const realStatLine = readFileSync("/proc/1/stat", "utf8");
 
@@ -66,17 +67,18 @@ test("parseProcStatStartTime fixture: fields[19] = starttime (22 for PID 1), fie
     .trim()
     .split(/\s+/);
 
-  // Verify the field layout matches the expected structure:
-  expect(fields[17]).toBe("1"); // num_threads
-  expect(fields[18]).toBe("0"); // itrealvalue
-  expect(fields[19]).toBe("22"); // starttime — valid for PID 1 (small, near boot)
-  expect(fields[20]).toBe("23117824"); // vsize — large but NOT starttime
-  expect(fields[21]).toBe("3296"); // RSS — changes as memory allocated/freed
+  // Verify the field layout: which field is starttime, which is vsize, which is RSS.
+  // Structure verification — values come from the real file, not hardcoded.
+  // fields[17] = num_threads, fields[18] = itrealvalue, fields[19] = starttime,
+  // fields[20] = vsize, fields[21] = RSS.
+  expect(Number(fields[17])).toBeGreaterThan(0); // num_threads > 0
+  expect(Number(fields[18])).toBeLessThan(100); // itrealvalue ≈ 0
+  // starttime is stable; vsize is larger than starttime on this system; RSS > 0
+  expect(Number(fields[20])).toBeGreaterThan(Number(fields[19])); // vsize > starttime
+  expect(Number(fields[21])).toBeGreaterThan(0); // RSS > 0
 
   // parseProcStatStartTime reads fields[19], not [18], [20], or [21].
-  // A bug reading fields[20] (vsize) would get "23117824" — wrong field.
-  // A bug reading fields[21] (RSS) would get "3296" — changes at runtime.
-  expect(parseProcStatStartTime(realStatLine)).toBe("22");
+  expect(parseProcStatStartTime(realStatLine)).toBe(fields[19]!);
 });
 
 /**
@@ -498,7 +500,8 @@ test("Scenario 8 (regression): vsize/RSS change but starttime constant → lock 
   const lockDir = join(root, "lock");
   mkdirSync(lockDir);
 
-  // Lock written when process had vsize = 23117824, RSS = 3296
+  // Lock written with processStartTime = fields[19] (starttime) from /proc/1/stat.
+  // vsize and RSS may change over time; starttime is stable until PID recycle.
   writeFileSync(
     join(lockDir, "owner.json"),
     JSON.stringify({
@@ -510,8 +513,7 @@ test("Scenario 8 (regression): vsize/RSS change but starttime constant → lock 
   );
 
   try {
-    // vsize changed from 23117824 → 99999999, RSS changed from 3296 → 9999.
-    // Starttime is fields[19] = "22" (unchanged).
+    // vsize/RSS may have changed since lock was written; starttime stays constant.
     // readStartInfo returns the SAME starttime → same process → lock kept.
     expect(() =>
       acquireWhatsAppSessionLease("memory-changed-account", {

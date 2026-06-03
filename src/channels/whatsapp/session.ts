@@ -6,29 +6,28 @@ import { loadQrCodeTerminalModule, loadWhatsAppModule } from "./runtime";
 import { setWhatsAppConnectionState } from "./state";
 
 /**
- * WhatsApp session lock — process identity via start time.
+ * WhatsApp session lock — process identity via starttime token.
  *
  * Lock owner identity is verified in three stages:
  *
  *  1. hostname — mismatch means different machine or container restarted.
  *
- *  2. owner.pid — absent or dead → stale.  Alive → verify with start time.
+ *  2. owner.pid — absent or dead → stale.  Alive → verify with starttime.
  *
- *  3. processStartTime (field 21 of /proc/<pid>/stat, in clock ticks on Linux,
- *     seconds since epoch on macOS) — compared against owner.processStartTime.
- *     Matching = same process (live lock, acquisition fails).
- *     Differing = PID recycled after crash/restart (stale, lock cleared).
+ *  3. owner.processStartTime — raw clock-tick token from /proc/<pid>/stat
+ *     field 22 (1-based).  Compared as string equality:
+ *       - match  → same process (live lock, acquisition fails)
+ *       - differ → PID recycled after crash/restart (stale, lock cleared)
  *
- * Why start time instead of a generated instanceId?
+ * Why starttime instead of a generated instanceId?
  * An instanceId written at lock acquisition time is different for every process,
  * so any second process would see a live lock as stale — violating the WhatsApp
- * singleton invariant.  Start time is stable across a process lifetime and only
+ * singleton invariant.  Starttime is stable across a process lifetime and only
  * changes when the PID is genuinely recycled (crash, restart, container recreate).
  *
- * Platform notes:
- *  - Linux:  field 21 is clock ticks since boot; converted to seconds via CLK_TCK.
- *  - macOS:  field 21 is seconds since epoch; stored as-is.
- *  - Other:  readStartInfo returns null → owner always considered stale.
+ * This implementation is Linux-specific.  readStartInfo returns null on
+ * platforms without /proc; in that case the lock owner cannot be verified and
+ * the conservative legacy path applies.
  *
  * Legacy locks (no processStartTime in owner.json):
  *   - PID alive + hostname matches → keep lock (conservative; cannot confirm
@@ -175,8 +174,8 @@ interface ProcessStartInfo {
  *
  * After slicing from the last ')' to skip the comm field, the fields are
  * (0-indexed; confirmed against /proc/1/stat on this system):
- *   fields[17] = 1-based field 20 = num_threads
- *   fields[18] = 1-based field 21 = itrealvalue (always 0 in modern kernels)
+ *   fields[17] = 1-based field 18 = num_threads
+ *   fields[18] = 1-based field 19 = itrealvalue (always 0 in modern kernels)
  *   fields[19] = 1-based field 22 = starttime (clock ticks since boot)  ← TARGET
  *   fields[20] = 1-based field 23 = vsize
  *   fields[21] = 1-based field 24 = RSS (changes as memory varies — NOT identity)
