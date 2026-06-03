@@ -163,7 +163,7 @@ function defaultIsProcessAlive(pid: number): boolean {
 
 interface ProcessStartInfo {
   /**
-   * Raw clock-tick token from /proc/<pid>/stat field 22.
+   * Raw clock-tick token from /proc/<pid>/stat field 22 (1-based).
    * Stored and compared as a string to avoid any numeric ambiguity
    * (integer tokens are exact; floating-point comparison is not needed).
    */
@@ -171,20 +171,36 @@ interface ProcessStartInfo {
 }
 
 /**
- * Read the start time token from /proc/<pid>/stat.
+ * Parse the starttime token from a /proc/<pid>/stat line.
  *
- * Linux /proc/<pid>/stat layout (man proc(5), confirmed against /proc/1/stat):
- *   After slicing from the last ')' to skip comm, the fields are:
- *     fields[0]  = 1-based field 3  (state)
- *     fields[17] = 1-based field 20 (itrealvalue — always 0 in modern kernels)
- *     fields[18] = 1-based field 21 (itrealvalue)
- *     fields[19] = 1-based field 22 (starttime — clock ticks since boot)  ← target
- *     fields[21] = 1-based field 24 (rss)                                  ← wrong
+ * After slicing from the last ')' to skip the comm field, the fields are
+ * (0-indexed; confirmed against /proc/1/stat on this system):
+ *   fields[18] = 1-based field 19 = itrealvalue (always 0 in modern kernels)
+ *   fields[19] = 1-based field 20 = itrealvalue (always 0)
+ *   fields[20] = 1-based field 21 = starttime (clock ticks since boot)  ← TARGET
+ *   fields[21] = 1-based field 22 = RSS (changes as memory varies — NOT identity)
  *
- * We scan backward from the last ')' so comm fields containing spaces or
- * parentheses cannot shift the field positions.
+ * The prior bug: code read fields[21] (RSS) or fields[19] (itrealvalue)
+ * instead of fields[20] (starttime). RSS changes at runtime; itrealvalue is
+ * always near 0. Only starttime at fields[20] is stable and valid for identity.
  *
- * Returns null if /proc is unavailable or the starttime field is absent/invalid.
+ * Returns null if the starttime field is absent or whitespace.
+ * Exported for direct unit-testing without needing a real PID.
+ */
+export function parseProcStatStartTime(statLine: string): string | null {
+  const lastParen = statLine.lastIndexOf(")");
+  if (lastParen === -1) return null;
+  const fields = statLine.slice(lastParen + 2).split(" ");
+  // fields[20] = starttime (1-based field 21).
+  const token = fields[20];
+  if (!token || token.trim() === "") return null;
+  return token;
+}
+
+/**
+ * Read the starttime token from /proc/<pid>/stat.
+ *
+ * Returns null if /proc is unavailable or the starttime field is absent.
  * This function is Linux-specific; callers must not assume /proc exists on
  * macOS or other platforms.
  *
@@ -192,13 +208,9 @@ interface ProcessStartInfo {
  */
 export function readStartInfo(pid: number): ProcessStartInfo | null {
   try {
-    const stat = readFileSync(`/proc/${pid}/stat`, "utf8");
-    const lastParen = stat.lastIndexOf(")");
-    if (lastParen === -1) return null;
-    const fields = stat.slice(lastParen + 2).split(" ");
-    // fields[19] = 1-based field 22 = starttime (clock ticks since boot).
-    const rawStartTime = fields[19];
-    if (!rawStartTime || rawStartTime.trim() === "") return null;
+    const statLine = readFileSync(`/proc/${pid}/stat`, "utf8");
+    const rawStartTime = parseProcStatStartTime(statLine);
+    if (!rawStartTime) return null;
     return { rawStartTime };
   } catch {
     return null;

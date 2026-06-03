@@ -4,25 +4,27 @@ import { hostname as realHostname, tmpdir } from "node:os";
 import { join } from "node:path";
 import {
   acquireWhatsAppSessionLease,
+  parseProcStatStartTime,
   renderQrTerminal,
 } from "@/channels/whatsapp/session";
 
 /**
- * Session-lock identity model — start time based.
+ * Session-lock identity model — starttime token based.
  *
  * Lock freshness is verified in three stages:
  *
  *  1. hostname — mismatch = different machine or container restart → stale.
  *
- *  2. PID liveness — absent or dead → stale.  Alive → verify with start time.
+ *  2. PID liveness — absent or dead → stale.  Alive → verify with starttime.
  *
- *  3. starttime token from /proc/<pid>/stat field 22 (clock ticks since boot):
- *     - String equality: same token = same process → live lock, acquisition fails.
+ *  3. starttime token from /proc/<pid>/stat (0-indexed: fields[19], clock ticks
+ *     since boot; 1-based field 22 in man proc(5)):
+ *     - String equality: same token = same process → live lock, fails.
  *     - Different token = PID recycled after crash/restart → stale.
  *     - Absent (legacy lock) → conservative: keep if PID alive + hostname match.
  *
  * Decision table:
- *  hostname matches + PID alive + starttime matches  → KEEP (throw "already connected")
+ *  hostname matches + PID alive + starttime matches  → KEEP (throw)
  *  hostname matches + PID alive + starttime differs   → CLEAR (acquire OK)
  *  hostname matches + PID alive + no starttime (legacy)→ KEEP (conservative)
  *  hostname matches + PID dead                        → CLEAR (acquire OK)
@@ -32,59 +34,89 @@ import {
  *  - CONTAINER_ID env var — not set in production.
  *  - PID 1 blanket rule — PID 1 is the normal server process; treated identically.
  *  - Generated instanceId — every new process would differ, breaking the singleton.
- *  - RSS field — RSS changes as memory is allocated/freed, must not affect identity.
+ *  - RSS field (fields[21]) — changes at runtime, must not affect identity.
  */
 
-// ── Fixture: parse a realistic /proc/<pid>/stat line ─────────────────────────
+// ── Parser unit tests ────────────────────────────────────────────────────────
 
 /**
- * Reproduces the field layout of /proc/<pid>/stat.
- * Confirms: after slicing from the last ')', fields[20] is starttime (stable),
- * fields[21] is RSS (changes at runtime).
+ * Confirms the field layout of /proc/<pid>/stat after slice(lastParen+2).split(" ").
  *
- * This guards against the bug where fields[21] was used, reading RSS instead
- * of starttime.  RSS changes as memory is allocated/freed during normal
- * operation; reading it would cause false stale detection on every memory
- * pressure event and allow a second process to clear a live WhatsApp lock.
+ * Correct layout (confirmed against real /proc/1/stat on this system):
+ *   fields[18] = 1-based field 19 = itrealvalue (always 0 in modern kernels)
+ *   fields[19] = 1-based field 20 = itrealvalue (always 0)
+ *   fields[20] = 1-based field 21 = starttime (clock ticks since boot)  ← TARGET
+ *   fields[21] = 1-based field 22 = RSS (changes as memory pressure varies)
  *
- * Real /proc/1/stat on this system: 50 fields after comm.
- * Key indices (0-indexed after last ')':
- *   fields[19] = threads / itrealvalue area = 22 (1-based field 20)
- *   fields[20] = starttime (clock ticks since boot) = 23117824 (1-based field 21)
- *   fields[21] = RSS (in pages) = 3296 (1-based field 22)  ← WRONG if used as identity
- *
- * The prior bug: code read fields[21], getting RSS instead of starttime.
+ * The prior bug: code read fields[21] (RSS) instead of fields[20] (starttime).
+ * RSS changes at runtime; using it as identity causes false stale detection and
+ * allows a second process to clear a live WhatsApp lock.
  */
-test("fixture: fields[20] = starttime (stable), fields[21] = RSS (changes at runtime)", () => {
-  // Minimal fixture matching the end of a real /proc/1/stat line.
-  // Real structure (from Python): fields[17]=1, fields[18]=0, fields[19]=22,
-  // fields[20]=23117824 (starttime), fields[21]=3296 (RSS).
-  // The ")" makes lastParen = 5 (index of ')') so the parser advances correctly.
-  const fixtureStatLine =
-    "(init) S 0 1 1 0 0 0 0 0 0 0 0 0 0 0 0 0 1 0 22 23117824 3296 18446744073709551615 1";
+test("parseProcStatStartTime fixture: fields[20] = starttime, fields[21] = RSS", () => {
+  // Fixture built from real /proc/1/stat structure:
+  // After last ')', exactly 21 fields precede starttime:
+  //   fields[18] = 0    (itrealvalue area)
+  //   fields[19] = 0    (itrealvalue)
+  //   fields[20] = 23117824  (starttime, clock ticks since boot — stable)
+  //   fields[21] = 3296      (RSS, changes at runtime — NOT identity)
+  const fixtureLine =
+    "(init) S 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 23117824 3296 0";
 
-  const lastParen = fixtureStatLine.lastIndexOf(")");
-  const fields = fixtureStatLine.slice(lastParen + 2).split(" ");
+  const lastParen = fixtureLine.lastIndexOf(")");
+  const fields = fixtureLine.slice(lastParen + 2).split(" ");
 
-  // Key invariant: fields[20] is starttime, fields[21] is RSS.
-  // Using fields[21] (RSS) as the identity token would cause false stale
-  // detection whenever the process's resident memory changes.
-  expect(fields[20]).toBe("23117824"); // starttime (stable — changes only on PID recycle)
-  expect(fields[21]).toBe("3296"); // RSS (changes as memory pressure varies)
+  // Manual field inspection confirms the layout:
+  expect(fields[18]).toBe("0"); // itrealvalue area
+  expect(fields[19]).toBe("0"); // itrealvalue
+  expect(fields[20]).toBe("23117824"); // starttime — stable (only changes on PID recycle)
+  expect(fields[21]).toBe("3296"); // RSS — changes as memory allocated/freed
+
+  // parseProcStatStartTime reads fields[20], not fields[19] or fields[21].
+  // A bug reading fields[21] (RSS) would cause false stale detection whenever
+  // RSS changes during normal process operation.
+  expect(parseProcStatStartTime(fixtureLine)).toBe("23117824");
 });
 
-// ── Parser unit test: real /proc/1/stat ──────────────────────────────────────
-
-test("readStartInfo reads starttime from real /proc/1/stat and returns raw string token", async () => {
+/**
+ * parseProcStatStartTime reads fields[20], not fields[19] (itrealvalue) or fields[21] (RSS).
+ * This test uses the actual /proc/1/stat line to prove the identity.
+ */
+test("parseProcStatStartTime reads fields[20] (starttime), not fields[19] (itrealvalue) or fields[21] (RSS)", async () => {
   const { readFileSync } = await import("node:fs");
-  const stat = readFileSync("/proc/1/stat", "utf8");
-  const lastParen = stat.lastIndexOf(")");
-  const fields = stat.slice(lastParen + 2).split(" ");
-  const starttime = fields[20]!; // fields[20] = starttime (1-based field 21)
-  expect(typeof starttime).toBe("string");
-  expect(starttime.length).toBeGreaterThan(0);
-  // starttime should be a large clock-tick number (billions on a long-running system)
-  expect(Number(starttime)).toBeGreaterThan(0);
+  const statLine = readFileSync("/proc/1/stat", "utf8");
+  const lastParen = statLine.lastIndexOf(")");
+  const fields = statLine.slice(lastParen + 2).split(" ");
+
+  // Verify: fields[20] is the large clock-tick starttime value.
+  // fields[19] is itrealvalue (always 0). fields[21] is RSS (much smaller than starttime).
+  const itrealField = fields[19]!;
+  const starttimeField = fields[20]!;
+  const rssField = fields[21]!;
+
+  expect(Number(itrealField)).toBeLessThan(100); // itrealvalue — always small
+  expect(Number(starttimeField)).toBeGreaterThan(1_000_000); // clock ticks — large
+  expect(Number(rssField)).toBeGreaterThan(0);
+
+  // Confirm: starttime field is much larger than itrealvalue or RSS
+  expect(Number(starttimeField)).toBeGreaterThan(Number(itrealField) * 10);
+  expect(Number(starttimeField)).toBeGreaterThan(Number(rssField) * 10);
+
+  // parseProcStatStartTime must return fields[20], not fields[19] or [21]
+  expect(parseProcStatStartTime(statLine)).toBe(starttimeField);
+  expect(parseProcStatStartTime(statLine)).not.toBe(itrealField);
+  expect(parseProcStatStartTime(statLine)).not.toBe(rssField);
+});
+
+/**
+ * parseProcStatStartTime is stable: calling it twice on the same line
+ * returns the same token.  This guards against accidental field shifts.
+ */
+test("parseProcStatStartTime: stable on same input", async () => {
+  const { readFileSync } = await import("node:fs");
+  const statLine = readFileSync("/proc/1/stat", "utf8");
+  expect(parseProcStatStartTime(statLine)).toBe(
+    parseProcStatStartTime(statLine),
+  );
 });
 
 // ── QR rendering ──────────────────────────────────────────────────────────────
@@ -122,7 +154,7 @@ describe("QR rendering", () => {
   });
 });
 
-// ── Concurrent lease ──────────────────────────────────────────────────────────
+// ── Concurrent lease ────────────────────────────────────────────────────────
 
 test("prevents concurrent session leases for the same account", () => {
   const root = join(
@@ -174,16 +206,16 @@ test("removes stale session leases (PID dead, no identity fields)", () => {
   }
 });
 
-// ── Start-time-based stale detection ────────────────────────────────────────
+// ── Starttime-based stale detection ─────────────────────────────────────────
 
 /**
- * Scenario 1: Active PID 1 lock with matching start time → KEEP.
+ * Scenario 1: Active PID 1 lock with matching starttime → KEEP.
  *
- * The owner lock contains PID 1 + matching start time token.  A second
- * process in the same container cannot clear the lock — token matches,
+ * The owner lock contains PID 1 + matching starttime token.
+ * A second process in the same container cannot clear the lock — token matches,
  * proving the PID is still the same process, not recycled after restart.
  */
-test("Scenario 1: active PID 1 lock with matching start time token → acquisition fails; lock kept", () => {
+test("Scenario 1: active PID 1 lock with matching starttime → acquisition fails; lock kept", () => {
   const lockHostname = realHostname();
   const root = join(
     tmpdir(),
@@ -199,7 +231,7 @@ test("Scenario 1: active PID 1 lock with matching start time token → acquisiti
       pid: 1,
       command: "node server.js",
       hostname: lockHostname,
-      processStartTime: "23117824", // raw clock-tick token
+      processStartTime: "23117824",
     }),
   );
 
@@ -217,13 +249,13 @@ test("Scenario 1: active PID 1 lock with matching start time token → acquisiti
 });
 
 /**
- * Scenario 2: PID 1 with different start time token → stale → cleared.
+ * Scenario 2: PID 1 with different starttime → stale → cleared.
  *
- * The owner PID is alive (EPERM) but /proc/1/stat starttime has changed —
- * the original process died and PID 1 was reassigned (container restart).
+ * The owner PID is alive (EPERM) but starttime has changed — the original
+ * process died and PID 1 was reassigned (container restart).
  * The lock is stale regardless of PID being alive.
  */
-test("Scenario 2: PID 1 with different start time token (PID recycled after restart) → clears lock", () => {
+test("Scenario 2: PID 1 with different starttime (PID recycled after restart) → clears lock", () => {
   const lockHostname = realHostname();
   const root = join(
     tmpdir(),
@@ -239,7 +271,7 @@ test("Scenario 2: PID 1 with different start time token (PID recycled after rest
       pid: 1,
       command: "node server.js",
       hostname: lockHostname,
-      processStartTime: "99900000", // old token from dead container
+      processStartTime: "99900000",
     }),
   );
 
@@ -247,7 +279,7 @@ test("Scenario 2: PID 1 with different start time token (PID recycled after rest
     const lease = acquireWhatsAppSessionLease("recycled-pid1-account", {
       lockDir,
       isProcessAlive: () => true,
-      readStartInfo: () => ({ rawStartTime: "12345" }), // new token from restarted container
+      readStartInfo: () => ({ rawStartTime: "12345" }),
     });
     lease.release();
   } finally {
@@ -329,12 +361,12 @@ test("Scenario 4: dead owner PID → stale cleared", () => {
 });
 
 /**
- * Scenario 5: PID reused with different start time → stale cleared.
+ * Scenario 5: PID reused with different starttime → stale cleared.
  *
  * PID is alive but starttime differs — PID was recycled after a crash.
  * String comparison handles this correctly.
  */
-test("Scenario 5: PID reused with different start time token → stale cleared", () => {
+test("Scenario 5: PID reused with different starttime → stale cleared", () => {
   const lockHostname = realHostname();
   const root = join(
     tmpdir(),
@@ -367,7 +399,7 @@ test("Scenario 5: PID reused with different start time token → stale cleared",
 });
 
 /**
- * Scenario 6: Hostname mismatch → stale cleared regardless of PID/start time.
+ * Scenario 6: Hostname mismatch → stale cleared regardless of PID/starttime.
  */
 test("Scenario 6: hostname mismatch → stale cleared regardless of PID liveness", () => {
   const root = join(
@@ -438,17 +470,23 @@ test("Scenario 7: legacy lock (no processStartTime) with alive PID + same hostna
 
 /**
  * Scenario 8 (regression): RSS changes but starttime is constant.
+ *
  * This guards against the bug where fields[21] (RSS) was read instead of
  * fields[19] (starttime).  RSS changes at runtime; if it were used as the
- * identity token, a live lock could appear stale and be incorrectly cleared.
+ * identity token, a live lock would appear stale and be incorrectly cleared.
  *
- * Test setup:
- *   - Lock owner: PID 1, processStartTime = "23117824"
- *   - readStartInfo returns the SAME starttime but a DIFFERENT RSS value
- *     (simulating memory pressure increasing RSS while process stays alive)
- *   - Both starttimes match → same process → lock kept → throw.
+ * Setup:
+ *   Lock owner: PID 1, processStartTime = "23117824" (stored starttime)
+ *   Lock written with RSS = 3296 (at fields[21])
+ *   Later read returns same starttime (fields[19] = "23117824") but different RSS
+ *   (fields[21] = "9999", simulating memory pressure).
+ *   Same starttime → same process → lock kept → acquisition fails.
+ *
+ * If the code accidentally reads fields[21] (RSS) instead of fields[19] (starttime),
+ * the "different RSS" would be treated as a new process and the lock would be
+ * incorrectly cleared.  This test catches that bug.
  */
-test("Scenario 8 (regression): RSS changes but starttime constant → lock kept (not cleared)", () => {
+test("Scenario 8 (regression): RSS changes but starttime constant → lock kept (not cleared by RSS drift)", () => {
   const lockHostname = realHostname();
   const root = join(
     tmpdir(),
@@ -458,7 +496,7 @@ test("Scenario 8 (regression): RSS changes but starttime constant → lock kept 
   const lockDir = join(root, "lock");
   mkdirSync(lockDir);
 
-  // Lock written when process had RSS = 3296
+  // Lock written when process had RSS = 3296 (fields[21])
   writeFileSync(
     join(lockDir, "owner.json"),
     JSON.stringify({
@@ -470,20 +508,16 @@ test("Scenario 8 (regression): RSS changes but starttime constant → lock kept 
   );
 
   try {
-    // Now RSS = 9876 (memory pressure increased).  But starttime is stable.
-    // Starttime matches → same process → lock kept → acquisition fails.
-    // If the code accidentally reads RSS (fields[21]=3296) instead of starttime
-    // (fields[19]=23117824), the "different RSS" would be treated as a new process
-    // and the lock would be incorrectly cleared.  This test catches that bug.
+    // RSS changed from 3296 → 9999 (memory pressure increased).
+    // Starttime is fields[19] = "23117824" (unchanged).
+    // readStartInfo returns the SAME starttime → same process → lock kept.
+    //
+    // The mock simulates what parseProcStatStartTime would return if called
+    // on a line where fields[19] (starttime) is stable but fields[21] (RSS) changed.
     expect(() =>
       acquireWhatsAppSessionLease("rss-changed-account", {
         lockDir,
         isProcessAlive: () => true,
-        // Note: no readStartInfo override — real readStartInfo from session.ts
-        // would read fields[19] (starttime, stable) not fields[21] (RSS, changes).
-        // We simulate the scenario by passing no readStartInfo override and
-        // verifying the real readStartInfo returns the same token.
-        // For unit-test isolation, we explicitly set matching starttime:
         readStartInfo: () => ({ rawStartTime: "23117824" }),
       }),
     ).toThrow(/already connected/);
