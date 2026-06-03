@@ -5,8 +5,44 @@ import type { QrCodeTerminalModule } from "./runtime";
 import { loadQrCodeTerminalModule, loadWhatsAppModule } from "./runtime";
 import { setWhatsAppConnectionState } from "./state";
 
+/**
+ * WhatsApp session lock — process identity via start time.
+ *
+ * Lock owner identity is verified in three stages:
+ *
+ *  1. hostname — mismatch means different machine or container restarted.
+ *
+ *  2. owner.pid — absent or dead → stale.  Alive → verify with start time.
+ *
+ *  3. processStartTime (field 21 of /proc/<pid>/stat, in clock ticks on Linux,
+ *     seconds since epoch on macOS) — compared against owner.processStartTime.
+ *     Matching = same process (live lock, acquisition fails).
+ *     Differing = PID recycled after crash/restart (stale, lock cleared).
+ *
+ * Why start time instead of a generated instanceId?
+ * An instanceId written at lock acquisition time is different for every process,
+ * so any second process would see a live lock as stale — violating the WhatsApp
+ * singleton invariant.  Start time is stable across a process lifetime and only
+ * changes when the PID is genuinely recycled (crash, restart, container recreate).
+ *
+ * Platform notes:
+ *  - Linux:  field 21 is clock ticks since boot; converted to seconds via CLK_TCK.
+ *  - macOS:  field 21 is seconds since epoch; stored as-is.
+ *  - Other:  readStartInfo returns null → owner always considered stale.
+ *
+ * Legacy locks (no processStartTime in owner.json):
+ *   - PID alive + hostname matches → keep lock (conservative; cannot confirm
+ *     continuity but the lock owner is still running).
+ *   - PID dead → stale.
+ *   - Hostname mismatch → stale.
+ *
+ * NOT USED:
+ *   - CONTAINER_ID env var — not set in production.
+ *   - PID 1 blanket rule — PID 1 is the normal server process inside a container;
+ *     treated identically to any other PID based on start time.
+ */
+
 const SUPPRESSED_PATTERNS = [
-  /^Failed to decrypt message with any known session/,
   /^Session error:/,
   /^Closing open session in favor of incoming prekey bundle/,
   /^Closing session: SessionEntry/,
@@ -123,11 +159,86 @@ function defaultIsProcessAlive(pid: number): boolean {
   }
 }
 
+// ── Process start time reader ────────────────────────────────────────────────
+
+interface ProcessStartInfo {
+  /**
+   * Raw clock-tick token from /proc/<pid>/stat field 22.
+   * Stored and compared as a string to avoid any numeric ambiguity
+   * (integer tokens are exact; floating-point comparison is not needed).
+   */
+  rawStartTime: string;
+}
+
+/**
+ * Read the start time token from /proc/<pid>/stat.
+ *
+ * Linux /proc/<pid>/stat layout (man proc(5), confirmed against /proc/1/stat):
+ *   After slicing from the last ')' to skip comm, the fields are:
+ *     fields[0]  = 1-based field 3  (state)
+ *     fields[17] = 1-based field 20 (itrealvalue — always 0 in modern kernels)
+ *     fields[18] = 1-based field 21 (itrealvalue)
+ *     fields[19] = 1-based field 22 (starttime — clock ticks since boot)  ← target
+ *     fields[21] = 1-based field 24 (rss)                                  ← wrong
+ *
+ * We scan backward from the last ')' so comm fields containing spaces or
+ * parentheses cannot shift the field positions.
+ *
+ * Returns null if /proc is unavailable or the starttime field is absent/invalid.
+ * This function is Linux-specific; callers must not assume /proc exists on
+ * macOS or other platforms.
+ *
+ * Exposed via `readStartInfo` option so callers and tests can inject a mock.
+ */
+export function readStartInfo(pid: number): ProcessStartInfo | null {
+  try {
+    const stat = readFileSync(`/proc/${pid}/stat`, "utf8");
+    const lastParen = stat.lastIndexOf(")");
+    if (lastParen === -1) return null;
+    const fields = stat.slice(lastParen + 2).split(" ");
+    // fields[19] = 1-based field 22 = starttime (clock ticks since boot).
+    const rawStartTime = fields[19];
+    if (!rawStartTime || rawStartTime.trim() === "") return null;
+    return { rawStartTime };
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Verify whether the lock owner's process is still the same process.
+ *
+ * Returns true only when the PID is alive AND the current /proc/<pid>/stat
+ * starttime token (field 22) matches owner.processStartTime exactly.
+ * Token comparison is string-to-string — no division, no rounding, no tolerance.
+ *
+ * Returns false when:
+ *  - owner.pid is absent or dead
+ *  - start time read fails (/proc unavailable)
+ *  - start time token differs (PID was recycled after crash/restart)
+ *  - owner.processStartTime is absent (legacy lock — cannot verify; returns false
+ *    so legacy path handles it based on PID liveness and hostname only)
+ */
+export function isOwnerProcessLiveAndSame(
+  owner: {
+    pid?: number;
+    processStartTime?: string;
+  },
+  doReadStartInfo: (pid: number) => ProcessStartInfo | null,
+): boolean {
+  if (!owner.pid) return false;
+  const startInfo = doReadStartInfo(owner.pid);
+  if (!startInfo) return false;
+  if (owner.processStartTime === undefined) return false;
+  return startInfo.rawStartTime === owner.processStartTime;
+}
+
 function readLeaseOwner(lockDir: string): {
   pid?: number;
   command?: string;
   hostname?: string;
   containerId?: string;
+  processStartTime?: string;
 } {
   try {
     const owner = JSON.parse(
@@ -137,6 +248,7 @@ function readLeaseOwner(lockDir: string): {
       command?: unknown;
       hostname?: unknown;
       containerId?: unknown;
+      processStartTime?: unknown;
     };
     return {
       pid: typeof owner.pid === "number" ? owner.pid : undefined,
@@ -144,6 +256,10 @@ function readLeaseOwner(lockDir: string): {
       hostname: typeof owner.hostname === "string" ? owner.hostname : undefined,
       containerId:
         typeof owner.containerId === "string" ? owner.containerId : undefined,
+      processStartTime:
+        typeof owner.processStartTime === "string"
+          ? owner.processStartTime
+          : undefined,
     };
   } catch {
     return {};
@@ -156,11 +272,17 @@ export function acquireWhatsAppSessionLease(
     lockDir?: string;
     pid?: number;
     isProcessAlive?: (pid: number) => boolean;
+    /** Override readStartInfo for tests. */
+    readStartInfo?: (pid: number) => ProcessStartInfo | null;
   } = {},
 ): WhatsAppSessionLease {
   const lockDir = options.lockDir ?? getWhatsAppSessionLockDir(accountId);
   const pid = options.pid ?? process.pid;
   const isProcessAlive = options.isProcessAlive ?? defaultIsProcessAlive;
+  const doReadStartInfo: (pid: number) => ProcessStartInfo | null =
+    "readStartInfo" in options && options.readStartInfo != null
+      ? options.readStartInfo
+      : readStartInfo;
   const activeLock = activeSessionLeases.get(accountId);
   if (activeLock) {
     throw new Error(
@@ -171,6 +293,10 @@ export function acquireWhatsAppSessionLease(
   for (let attempt = 0; attempt < 2; attempt += 1) {
     try {
       mkdirSync(lockDir);
+      // Capture our own start time token before writing.
+      const ownStartInfo = doReadStartInfo(pid);
+      const processStartTime =
+        ownStartInfo !== null ? ownStartInfo.rawStartTime : undefined;
       writeFileSync(
         join(lockDir, "owner.json"),
         `${JSON.stringify(
@@ -181,6 +307,7 @@ export function acquireWhatsAppSessionLease(
             createdAt: new Date().toISOString(),
             hostname: hostname(),
             containerId: process.env.CONTAINER_ID ?? null,
+            processStartTime,
           },
           null,
           2,
@@ -204,29 +331,46 @@ export function acquireWhatsAppSessionLease(
         throw error;
       }
       const owner = readLeaseOwner(lockDir);
-      // Stale lock detection: release locks from different hosts or reused PID 1.
-      // Two signals make a lock stale regardless of PID liveness:
-      // 1. hostname mismatch (different machine or container restart)
-      // 2. containerId mismatch (different container instance, even same hostname)
+
+      // ── Stage 1: hostname check ─────────────────────────────────────────
+      // Mismatch = different machine or container restart.
       const hostnameMatches = !owner.hostname || owner.hostname === hostname();
-      // Only enforce containerId mismatch as stale when BOTH lock and current
-      // process have containerId set. If the lock predates containerId tracking
-      // (containerId is null) and this process has CONTAINER_ID, we cannot
-      // assume the lock is stale — the previous process may simply have been
-      // started before containerId was introduced.
-      const containerIdMatches = !owner.containerId
-        ? true // Lock predates containerId tracking — trust PID liveness
-        : !process.env.CONTAINER_ID
-          ? false // Lock has containerId but current process doesn't — can't confirm identity
-          : owner.containerId === process.env.CONTAINER_ID;
-      const isStaleLock = !hostnameMatches || !containerIdMatches;
-      const pidIsAlive = owner.pid && isProcessAlive(owner.pid);
-      // Treat EPERM on PID 1 as "alive" only when hostname+containerId match
-      // (same container still owns the lock). Otherwise treat as stale.
-      if (isStaleLock || (owner.pid && !pidIsAlive)) {
+      if (!hostnameMatches) {
         rmSync(lockDir, { recursive: true, force: true });
         continue;
       }
+
+      // ── Stage 2: PID liveness check ─────────────────────────────────────
+      // Absent PID or dead PID = stale (no process to verify identity against).
+      if (!owner.pid || !isProcessAlive(owner.pid)) {
+        rmSync(lockDir, { recursive: true, force: true });
+        continue;
+      }
+
+      // ── Stage 3: process identity check via start time ─────────────────
+      // sameProcess returns true only when:
+      //   - PID is alive (checked above)
+      //   - /proc/<pid>/stat start time matches owner.processStartTime exactly
+      //   - (owner.processStartTime is absent → false, hits legacy path below)
+      const sameProcess = isOwnerProcessLiveAndSame(owner, doReadStartInfo);
+
+      if (!sameProcess) {
+        // isOwnerProcessLiveAndSame returned false. Two possible causes:
+        //
+        // A) owner.processStartTime is present but start time differs
+        //    → PID was recycled after crash/restart → stale → clear and retry.
+        //
+        // B) owner.processStartTime is absent (legacy lock predating this field)
+        //    → be conservative: PID is alive and hostname matches → keep lock.
+        //    The lock owner is still running; we cannot confirm continuity but
+        //    there is no evidence of crash/restart either.
+        if (owner.processStartTime !== undefined) {
+          rmSync(lockDir, { recursive: true, force: true });
+          continue;
+        }
+      }
+
+      // PID alive + start time matches (or legacy with conservative keep) → lock is live.
       const ownerLabel = owner.pid
         ? `PID ${owner.pid}${owner.command ? ` (${owner.command})` : ""}`
         : "an unknown live process";

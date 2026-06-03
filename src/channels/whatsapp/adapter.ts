@@ -495,6 +495,38 @@ export function createWhatsAppAdapter(
     }
   }
 
+  const logPrefix = `[WhatsApp:${account.accountId}]`;
+
+  /**
+   * Structured log helper for WhatsApp outbound operations.
+   * Writes a JSON line to stdout so smoke tests can grep structured events.
+   * The `__whatsappSendLog` global allows test assertions to intercept output.
+   */
+  function logSend(
+    level: "info" | "error",
+    action: string,
+    extra: Record<string, unknown>,
+    message: string,
+  ) {
+    const globalThisAny = globalThis as unknown as Record<string, unknown>;
+    if (typeof globalThisAny.__whatsappSendLog === "function") {
+      globalThisAny.__whatsappSendLog(
+        level,
+        action,
+        extra as Record<string, string>,
+      );
+    }
+    if (level === "error") {
+      console.error(
+        `${logPrefix} ${message} ${JSON.stringify({ ts: new Date().toISOString(), level, action, ...extra })}`,
+      );
+    } else {
+      console.log(
+        `${logPrefix} ${message} ${JSON.stringify({ ts: new Date().toISOString(), level, action, ...extra })}`,
+      );
+    }
+  }
+
   async function sendToWhatsApp(
     chatId: string,
     payload: Record<string, unknown>,
@@ -508,7 +540,18 @@ export function createWhatsAppAdapter(
       lidToJid,
       sock,
     });
-    return await sock.sendMessage(targetJid, payload, options);
+    try {
+      return await sock.sendMessage(targetJid, payload, options);
+    } catch (err) {
+      const detail = err instanceof Error ? err.message : String(err);
+      logSend(
+        "error",
+        "whatsapp_send_failed",
+        { chatId, detail },
+        `WhatsApp send failed: ${detail}`,
+      );
+      throw err;
+    }
   }
 
   const adapter: ChannelAdapter = {
@@ -565,6 +608,12 @@ export function createWhatsAppAdapter(
         });
         const id = result.key?.id ?? target;
         rememberSent(id, result);
+        logSend(
+          "info",
+          "whatsapp_reaction_sent",
+          { messageId: id, chatId: msg.chatId },
+          "WhatsApp reaction sent",
+        );
         return { messageId: id };
       }
       try {
@@ -580,6 +629,12 @@ export function createWhatsAppAdapter(
       );
       const id = result.key?.id ?? "";
       rememberSent(id, result);
+      logSend(
+        "info",
+        "whatsapp_message_sent",
+        { messageId: id, chatId: msg.chatId },
+        "WhatsApp outbound message sent",
+      );
       return { messageId: id };
     },
 
@@ -598,6 +653,12 @@ export function createWhatsAppAdapter(
         buildQuotedOptions(targetJid, options?.replyToMessageId),
       );
       rememberSent(result.key?.id ?? "", result);
+      logSend(
+        "info",
+        "whatsapp_direct_reply_sent",
+        { chatId },
+        "WhatsApp direct reply sent",
+      );
     },
 
     async handleControlRequestEvent(event: ChannelControlRequestEvent) {
