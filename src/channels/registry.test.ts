@@ -1564,6 +1564,55 @@ describe("shouldAutoApproveChannelMessageTool — LID-to-phone-JID resolution", 
       mod.shouldAutoApproveChannelMessageTool as any;
   });
 
+  /**
+   * Verify senderId derivation for resolved LID DMs.
+   * chatId = LID, resolvedPhoneJid = phone JID, senderId must come from
+   * phone JID (senderIdFromJid), not the LID.
+   */
+  test("resolved LID DM: chatId=LID, resolvedPhoneJid=phone JID, senderId from phone JID", () => {
+    const phoneJid = "34600216777@s.whatsapp.net";
+    const lid = "210565536456917@lid";
+    const phoneDigits = "34600216777";
+
+    // Rollback senderJid logic for resolved LID DMs:
+    //   senderJid = resolvedPhoneJidFromChatId ?? chatId
+    //             = phoneJid  (resolved is set for resolved LIDs)
+    //   senderId  = senderIdFromJid(senderJid) = senderIdFromJid(phoneJid)
+    //             = phoneDigits
+    const inbound: import("@/channels/types").InboundChannelMessage = {
+      channel: "whatsapp",
+      accountId: "acct-wa",
+      chatId: lid,
+      resolvedPhoneJid: phoneJid,
+      senderId: phoneDigits,
+      senderName: "Alice",
+      text: "hello",
+      timestamp: Date.now(),
+      messageId: "msg-lid",
+      chatType: "direct",
+    };
+
+    expect(inbound.chatId).toBe(lid);
+    expect(inbound.resolvedPhoneJid).toBe(phoneJid);
+    expect(inbound.senderId).toBe(phoneDigits);
+    // senderId must NOT be the LID bare form
+    expect(inbound.senderId).not.toBe("210565536456917");
+
+    const route = {
+      agentId: "agent-samantha",
+      conversationId: "conv-wa-samantha",
+      channel: "whatsapp" as const,
+      accountId: "acct-wa",
+      chatId: lid,
+      chatType: "direct" as const,
+      enabled: true,
+      createdAt: "2024-01-01T00:00:00.000Z",
+    };
+    const source = buildChannelTurnSource(route, inbound);
+    expect(source.chatId).toBe(lid);
+    expect(source.resolvedPhoneJid).toBe(phoneJid);
+  });
+
   function makeRuntime(sources: RuntimeSource[]) {
     return { activeChannelTurnSources: sources };
   }
