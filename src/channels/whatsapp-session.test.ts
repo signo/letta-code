@@ -39,13 +39,11 @@ import {
 
 /**
  * Confirms the field layout of /proc/<pid>/stat after slice(lastParen+2).trim().split(/\s+/).
- *
- * Correct layout (confirmed against real /proc/1/stat on this system, man proc(5)):
- *   fields[17] = 1-based field 18 = num_threads
- *   fields[18] = 1-based field 19 = itrealvalue (always 0 in modern kernels)
- *   fields[19] = 1-based field 20 = starttime (clock ticks since boot)  ← TARGET
- *   fields[20] = 1-based field 21 = vsize
- *   fields[21] = 1-based field 22 = RSS (changes as memory varies)
+ *   fields[17] = proc field 20 = num_threads
+ *   fields[18] = proc field 21 = itrealvalue (always 0 in modern kernels)
+ *   fields[19] = proc field 22 = starttime  ← TARGET
+ *   fields[20] = proc field 23 = vsize
+ *   fields[21] = proc field 24 = RSS (changes as memory varies)
  *
  * IMPORTANT: starttime for PID 1 is small (tens/hundreds) since PID 1 starts near
  * boot. Do NOT use magnitude to identify starttime — use field position (fields[19]).

@@ -14,8 +14,8 @@ import { setWhatsAppConnectionState } from "./state";
  *
  *  2. owner.pid — absent or dead → stale.  Alive → verify with starttime.
  *
- *  3. owner.processStartTime — raw clock-tick token from /proc/<pid>/stat
- *     field 22 (1-based).  Compared as string equality:
+ *  3. owner.processStartTime — raw token from /proc/<pid>/stat field 22.
+ *     Compared as string equality:
  *       - match  → same process (live lock, acquisition fails)
  *       - differ → PID recycled after crash/restart (stale, lock cleared)
  *
@@ -25,9 +25,9 @@ import { setWhatsAppConnectionState } from "./state";
  * singleton invariant.  Starttime is stable across a process lifetime and only
  * changes when the PID is genuinely recycled (crash, restart, container recreate).
  *
- * This implementation is Linux-specific.  readStartInfo returns null on
- * platforms without /proc; in that case the lock owner cannot be verified and
- * the conservative legacy path applies.
+ * This implementation is Linux-specific and reads /proc/<pid>/stat.  On
+ * platforms without /proc, readStartInfo returns null and the lock owner
+ * cannot be verified — the conservative legacy path applies.
  *
  * Legacy locks (no processStartTime in owner.json):
  *   - PID alive + hostname matches → keep lock (conservative; cannot confirm
@@ -38,7 +38,14 @@ import { setWhatsAppConnectionState } from "./state";
  * NOT USED:
  *   - CONTAINER_ID env var — not set in production.
  *   - PID 1 blanket rule — PID 1 is the normal server process inside a container;
- *     treated identically to any other PID based on start time.
+ *     treated identically to any other PID based on starttime.
+ *
+ * /proc/<pid>/stat field layout (0-indexed after slicing past comm):
+ *   fields[17] = proc field 20 = num_threads
+ *   fields[18] = proc field 21 = itrealvalue
+ *   fields[19] = proc field 22 = starttime  ← TARGET
+ *   fields[20] = proc field 23 = vsize
+ *   fields[21] = proc field 24 = RSS
  */
 
 const SUPPRESSED_PATTERNS = [
@@ -172,13 +179,12 @@ interface ProcessStartInfo {
 /**
  * Parse the starttime token from a /proc/<pid>/stat line.
  *
- * After slicing from the last ')' to skip the comm field, the fields are
- * (0-indexed; confirmed against /proc/1/stat on this system):
- *   fields[17] = 1-based field 18 = num_threads
- *   fields[18] = 1-based field 19 = itrealvalue (always 0 in modern kernels)
- *   fields[19] = 1-based field 22 = starttime (clock ticks since boot)  ← TARGET
- *   fields[20] = 1-based field 23 = vsize
- *   fields[21] = 1-based field 24 = RSS (changes as memory varies — NOT identity)
+ * After slicing from the last ')' to skip the comm field, the fields are:
+ *   fields[17] = proc field 20 = num_threads
+ *   fields[18] = proc field 21 = itrealvalue (always 0 in modern kernels)
+ *   fields[19] = proc field 22 = starttime  ← TARGET
+ *   fields[20] = proc field 23 = vsize
+ *   fields[21] = proc field 24 = RSS (changes as memory varies — NOT identity)
  *
  * NOTE: starttime for PID 1 can be small (tens/hundreds) since PID 1 starts
  * near boot. Do NOT assume starttime must be a large number — that is invalid
@@ -198,7 +204,7 @@ export function parseProcStatStartTime(statLine: string): string | null {
     .slice(lastParen + 2)
     .trim()
     .split(/\s+/);
-  // fields[19] = starttime (1-based field 22).
+  // fields[19] = proc field 22 = starttime.
   const token = fields[19];
   if (!token || token.trim() === "") return null;
   return token;
@@ -209,7 +215,7 @@ export function parseProcStatStartTime(statLine: string): string | null {
  *
  * Returns null if /proc is unavailable or the starttime field is absent.
  * This function is Linux-specific; callers must not assume /proc exists on
- * macOS or other platforms.
+ * non-Linux platforms.
  *
  * Exposed via `readStartInfo` option so callers and tests can inject a mock.
  */
@@ -228,7 +234,7 @@ export function readStartInfo(pid: number): ProcessStartInfo | null {
  * Verify whether the lock owner's process is still the same process.
  *
  * Returns true only when the PID is alive AND the current /proc/<pid>/stat
- * starttime token (field 22) matches owner.processStartTime exactly.
+ * starttime token (proc field 22) matches owner.processStartTime exactly.
  * Token comparison is string-to-string — no division, no rounding, no tolerance.
  *
  * Returns false when:
