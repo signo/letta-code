@@ -7,6 +7,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
   hasHooks,
+  runModelChangeHooks,
   runNotificationHooks,
   runPermissionRequestHooks,
   runPostToolUseFailureHooks,
@@ -19,6 +20,7 @@ import {
   runSubagentStopHooks,
   runUserPromptSubmitHooks,
 } from "@/hooks";
+import { type ModelChangeHookInput } from "@/hooks/types";
 import { checkPermissionWithHooks } from "@/permissions/checker";
 import { permissionMode } from "@/permissions/mode";
 import { settingsManager } from "@/settings-manager";
@@ -1046,6 +1048,176 @@ describe.skipIf(isWindows)("Hooks Integration Tests", () => {
       expect(result.results).toHaveLength(2);
       // Allow headroom for CI runners (especially macOS ARM) which can be slow
       expect(duration).toBeLessThan(400);
+    });
+  });
+
+  // ============================================================================
+  // ModelChange Hooks
+  // ============================================================================
+
+  describe("ModelChange hooks", () => {
+    test("runs when model is changed", async () => {
+      createHooksConfig({
+        ModelChange: [
+          {
+            matcher: "*",
+            hooks: [{ type: "command", command: "echo 'model changed'" }],
+          },
+        ],
+      });
+
+      const result = await runModelChangeHooks(
+        { handle: "anthropic/claude-sonnet-4-7-20250514" },
+        { handle: "anthropic/claude-opus-4-5-20251120" },
+        "agent-123",
+        "conv-456",
+        "agent",
+        tempDir,
+      );
+
+      expect(result.results[0]?.stdout).toBe("model changed");
+    });
+
+    test("receives model info in input", async () => {
+      createHooksConfig({
+        ModelChange: [
+          {
+            matcher: "*",
+            hooks: [{ type: "command", command: "cat" }],
+          },
+        ],
+      });
+
+      const result = await runModelChangeHooks(
+        {
+          handle: "anthropic/claude-opus-4-5-20251120",
+          context_window: 1000000,
+          reasoning_effort: "high",
+        },
+        {
+          handle: "anthropic/claude-sonnet-4-7-20250514",
+          context_window: 200000,
+          reasoning_effort: "medium",
+        },
+        "agent-abc",
+        "conv-xyz",
+        "conversation",
+        tempDir,
+      );
+
+      const parsed = result.results[0]?.stdout
+        ? (JSON.parse(result.results[0].stdout) as ModelChangeHookInput)
+        : null;
+      expect(parsed?.event_type).toBe("ModelChange");
+      expect(parsed?.previous_model?.handle).toBe(
+        "anthropic/claude-opus-4-5-20251120",
+      );
+      expect(parsed?.previous_model?.context_window).toBe(1000000);
+      expect(parsed?.previous_model?.reasoning_effort).toBe("high");
+      expect(parsed?.new_model?.handle).toBe(
+        "anthropic/claude-sonnet-4-7-20250514",
+      );
+      expect(parsed?.new_model?.context_window).toBe(200000);
+      expect(parsed?.new_model?.reasoning_effort).toBe("medium");
+      expect(parsed?.agent_id).toBe("agent-abc");
+      expect(parsed?.conversation_id).toBe("conv-xyz");
+      expect(parsed?.applied_to).toBe("conversation");
+    });
+
+    test("handles null conversation_id for default conversation", async () => {
+      createHooksConfig({
+        ModelChange: [
+          {
+            matcher: "*",
+            hooks: [{ type: "command", command: "cat" }],
+          },
+        ],
+      });
+
+      const result = await runModelChangeHooks(
+        { handle: "model-a" },
+        { handle: "model-b" },
+        "agent-123",
+        null,
+        "agent",
+        tempDir,
+      );
+
+      const parsed = result.results[0]?.stdout
+        ? (JSON.parse(result.results[0].stdout) as ModelChangeHookInput)
+        : null;
+      expect(parsed?.conversation_id).toBeNull();
+    });
+
+    test("runs hooks in parallel", async () => {
+      createHooksConfig({
+        ModelChange: [
+          {
+            matcher: "*",
+            hooks: [
+              { type: "command", command: "sleep 0.1 && echo 'h1'" },
+              { type: "command", command: "sleep 0.1 && echo 'h2'" },
+            ],
+          },
+        ],
+      });
+
+      const start = Date.now();
+      const result = await runModelChangeHooks(
+        { handle: "model-a" },
+        { handle: "model-b" },
+        undefined,
+        undefined,
+        undefined,
+        tempDir,
+      );
+      const duration = Date.now() - start;
+
+      expect(result.results).toHaveLength(2);
+      // Allow headroom for CI runners (especially macOS ARM) which can be slow
+      expect(duration).toBeLessThan(400);
+    });
+
+    test("returns empty result when no hooks configured", async () => {
+      const result = await runModelChangeHooks(
+        { handle: "model-a" },
+        { handle: "model-b" },
+        undefined,
+        undefined,
+        undefined,
+        tempDir,
+      );
+
+      expect(result.blocked).toBe(false);
+      expect(result.errored).toBe(false);
+      expect(result.results).toHaveLength(0);
+    });
+
+    test("runs even without agent_id or conversation_id", async () => {
+      createHooksConfig({
+        ModelChange: [
+          {
+            matcher: "*",
+            hooks: [{ type: "command", command: "cat" }],
+          },
+        ],
+      });
+
+      const result = await runModelChangeHooks(
+        { handle: "model-a", context_window: 200000 },
+        { handle: "model-b", context_window: 1000000 },
+        undefined,
+        undefined,
+        undefined,
+        tempDir,
+      );
+
+      expect(result.results).toHaveLength(1);
+      const parsed = result.results[0]?.stdout
+        ? (JSON.parse(result.results[0].stdout) as ModelChangeHookInput)
+        : null;
+      expect(parsed?.previous_model?.context_window).toBe(200000);
+      expect(parsed?.new_model?.context_window).toBe(1000000);
     });
   });
 

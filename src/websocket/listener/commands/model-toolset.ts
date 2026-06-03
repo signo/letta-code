@@ -14,6 +14,7 @@ import {
   buildByokProviderAliases,
   listProviders,
 } from "@/providers/byok-providers";
+import { runModelChangeHooks } from "@/hooks";
 import { settingsManager } from "@/settings-manager";
 import {
   ensureCorrectMemoryTool,
@@ -353,6 +354,47 @@ export async function applyModelUpdateForRuntime(params: {
         }
       ).model_settings as Record<string, unknown> | null | undefined) ?? null;
     appliedTo = "conversation";
+  }
+
+  // Fire ModelChange hooks after the update succeeds (non-blocking, runs in parallel).
+  // Pass previous and new model info so hooks can enforce model-specific configuration
+  // (e.g., context_window, max_output_tokens, reasoning_effort).
+  const previousModelHandle = currentModelScope.modelHandle ?? null;
+  const newModelHandle = model.handle;
+  if (previousModelHandle && previousModelHandle !== newModelHandle) {
+    runModelChangeHooks(
+      {
+        handle: previousModelHandle,
+        context_window: currentModelScope.llmConfig?.context_window ?? undefined,
+        reasoning_effort:
+          (currentModelScope.llmConfig as { reasoning_effort?: string } | null)
+            ?.reasoning_effort ?? undefined,
+      },
+      {
+        handle: newModelHandle,
+        context_window:
+          typeof model.updateArgs?.context_window === "number"
+            ? model.updateArgs.context_window
+            : undefined,
+        reasoning_effort:
+          typeof model.updateArgs?.reasoning_effort === "string"
+            ? model.updateArgs.reasoning_effort
+            : undefined,
+      },
+      agentId,
+      isDefaultConversation ? null : conversationId,
+      appliedTo,
+    ).catch((err: unknown) => {
+      // Non-blocking: surface hook errors as a warning but don't fail the model switch.
+      emitStatusDelta(socket, scopedRuntime, {
+        message: `ModelChange hook failed: ${
+          err instanceof Error ? err.message : "unknown error"
+        }`,
+        level: "warning",
+        agentId,
+        conversationId,
+      });
+    });
   }
 
   const toolsetPreference = settingsManager.getToolsetPreference(agentId);

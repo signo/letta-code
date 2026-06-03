@@ -7,6 +7,7 @@ import { getHooksForEvent, hasHooksForEvent, loadHooks } from "./loader";
 import type {
   HookEvent,
   HookExecutionResult,
+  ModelChangeHookInput,
   NotificationHookInput,
   PermissionRequestHookInput,
   PostToolUseFailureHookInput,
@@ -439,6 +440,43 @@ export async function runSessionEndHooks(
   };
 
   // Run in parallel - SessionEnd cannot block (session is already ending)
+  return executeHooksParallel(hooks, input, workingDirectory);
+}
+
+/**
+ * Run ModelChange hooks after the active model is successfully changed.
+ * These run in parallel and cannot block — the model update is already applied.
+ * Useful for enforcing model-specific configuration (context_window,
+ * max_output_tokens, reasoning_effort) via sync scripts.
+ */
+export async function runModelChangeHooks(
+  previousModel: { handle: string; context_window?: number; reasoning_effort?: string },
+  newModel: { handle: string; context_window?: number; reasoning_effort?: string },
+  agentId?: string,
+  conversationId?: string | null,
+  appliedTo?: "agent" | "conversation",
+  workingDirectory: string = process.cwd(),
+): Promise<HookExecutionResult> {
+  const hooks = await getHooksForEvent(
+    "ModelChange",
+    undefined,
+    workingDirectory,
+  );
+  if (hooks.length === 0) {
+    return { blocked: false, errored: false, feedback: [], results: [] };
+  }
+
+  const input: ModelChangeHookInput = {
+    event_type: "ModelChange",
+    working_directory: workingDirectory,
+    previous_model: previousModel,
+    new_model: newModel,
+    agent_id: agentId,
+    conversation_id: conversationId,
+    applied_to: appliedTo,
+  };
+
+  // Run in parallel - ModelChange cannot block (model already changed)
   return executeHooksParallel(hooks, input, workingDirectory);
 }
 

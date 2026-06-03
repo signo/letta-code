@@ -20,7 +20,8 @@ export type SimpleHookEvent =
   | "SubagentStop" // Runs when subagent tasks complete (can block)
   | "PreCompact" // Runs before a compact operation (cannot block)
   | "SessionStart" // Runs when a new session starts or is resumed
-  | "SessionEnd"; // Runs when session ends (cannot block)
+  | "SessionEnd" // Runs when session ends (cannot block)
+  | "ModelChange"; // Runs when the active model is changed (cannot block)
 
 /**
  * All hook event types
@@ -80,6 +81,7 @@ export const PROMPT_HOOK_SUPPORTED_EVENTS: Set<HookEvent> = new Set([
   "UserPromptSubmit",
   "Stop",
   "SubagentStop",
+  "ModelChange",
 ]);
 
 /**
@@ -435,6 +437,35 @@ export interface SessionEndHookInput extends HookInputBase {
 }
 
 /**
+ * Input for ModelChange hooks
+ * Triggered after the active model is successfully changed.
+ * Cannot block — runs in parallel after the update completes.
+ * Useful for enforcing model-specific configuration (e.g., context_window,
+ * max_output_tokens, reasoning_effort) via sync scripts.
+ */
+export interface ModelChangeHookInput extends HookInputBase {
+  event_type: "ModelChange";
+  /** The model before the change */
+  previous_model: {
+    handle: string;
+    context_window?: number;
+    reasoning_effort?: string;
+  };
+  /** The new active model */
+  new_model: {
+    handle: string;
+    context_window?: number;
+    reasoning_effort?: string;
+  };
+  /** Agent ID */
+  agent_id?: string;
+  /** Conversation ID (null for default conversation) */
+  conversation_id?: string | null;
+  /** Whether the update was applied at agent level or conversation level */
+  applied_to?: "agent" | "conversation";
+}
+
+/**
  * Union type for all hook inputs
  */
 export type HookInput =
@@ -448,4 +479,5 @@ export type HookInput =
   | SubagentStopHookInput
   | PreCompactHookInput
   | SessionStartHookInput
-  | SessionEndHookInput;
+  | SessionEndHookInput
+  | ModelChangeHookInput;
