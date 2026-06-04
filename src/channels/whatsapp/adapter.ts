@@ -29,6 +29,7 @@ import {
 } from "./media";
 import { loadWhatsAppModule } from "./runtime";
 import { createWhatsAppSocket, getWhatsAppAuthDir } from "./session";
+import { matchesWildcardList } from "@/channels/wildcardList";
 import { setWhatsAppConnectionState } from "./state";
 
 const CHANNEL_ID = "whatsapp";
@@ -142,10 +143,7 @@ function shouldProcessGroup(params: {
     selfLid,
   } = params;
   if (account.groupMode === "disabled") return false;
-  if (
-    account.allowedGroups?.length &&
-    !account.allowedGroups.includes(groupJid)
-  ) {
+  if (!matchesWildcardList(account.allowedGroups ?? [], groupJid)) {
     return false;
   }
   if (account.groupMode === "open") return true;
