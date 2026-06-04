@@ -54,13 +54,10 @@ describe("WhatsApp MessageChannel actions", () => {
   });
 
   test("documents the Ogg/Opus requirement for media uploads", () => {
-    expect(whatsappMessageActions.describeMessageTool({}).schema).toEqual({
-      properties: {
-        media: expect.objectContaining({
-          description: expect.stringContaining("Ogg/Opus"),
-        }),
-      },
-    });
+    const desc = whatsappMessageActions.describeMessageTool({}).schema;
+    expect(desc.properties.media.description).toContain("Ogg/Opus");
+    expect(desc.properties.media.description).not.toContain("rejected");
+    expect(desc.properties.media.description).not.toContain("reject");
   });
 
   test("sends text messages", async () => {
@@ -85,15 +82,45 @@ describe("WhatsApp MessageChannel actions", () => {
     );
   });
 
-  test("rejects MP3 voice memo uploads before calling the adapter", async () => {
+  test("upload-file with .mp3 reaches adapter as document", async () => {
     const { ctx, sent } = makeContext("upload-file", {
-      mediaPath: "/tmp/voice.mp3",
+      mediaPath: "/tmp/song.mp3",
     });
 
     await expect(whatsappMessageActions.handleAction(ctx)).resolves.toMatch(
-      /Ogg\/Opus/,
+      /Attachment sent/,
     );
-    expect(sent).toHaveLength(0);
+    expect(sent).toHaveLength(1);
+    expect(sent[0]).toEqual(
+      expect.objectContaining({
+        mediaPath: "/tmp/song.mp3",
+      }),
+    );
+    // No audio/PTT — MP3 is a document
+    expect(sent[0]).not.toEqual(
+      expect.objectContaining({ ptt: expect.anything() }),
+    );
+    expect(sent[0]).not.toEqual(
+      expect.objectContaining({ text: expect.stringContaining("Error") }),
+    );
+  });
+
+  test("upload-file with .mp3 uses filename extension over mediaPath", async () => {
+    const { ctx, sent } = makeContext("upload-file", {
+      mediaPath: "/tmp/upload",
+      filename: "song.mp3",
+    });
+
+    await expect(whatsappMessageActions.handleAction(ctx)).resolves.toMatch(
+      /Attachment sent/,
+    );
+    expect(sent).toHaveLength(1);
+    expect(sent[0]).toEqual(
+      expect.objectContaining({
+        mediaPath: "/tmp/upload",
+        fileName: "song.mp3",
+      }),
+    );
   });
 
   test("sends reactions", async () => {

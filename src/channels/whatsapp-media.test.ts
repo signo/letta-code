@@ -58,13 +58,53 @@ describe("WhatsApp media helpers", () => {
     });
   });
 
-  test("rejects non-Ogg/Opus audio for outbound voice memos", () => {
-    expect(() =>
-      buildWhatsAppOutboundPayload({
-        text: "",
-        mediaPath: "/tmp/voice.mp3",
-      }),
-    ).toThrow(/Ogg\/Opus/);
+  test(".ogg still builds audio/PTT payload", () => {
+    const result = buildWhatsAppOutboundPayload({
+      text: "",
+      mediaPath: "/tmp/voice.ogg",
+    });
+    expect(result).toEqual({
+      audio: { url: "/tmp/voice.ogg" },
+      mimetype: "audio/ogg; codecs=opus",
+      ptt: true,
+    });
+    expect(result).not.toHaveProperty("document");
+    expect(result).not.toHaveProperty("ptt", false);
+  });
+
+  test(".mp3 builds document payload with fileName and no audio/ptt", () => {
+    const result = buildWhatsAppOutboundPayload({
+      text: "",
+      mediaPath: "/tmp/song.mp3",
+      fileName: "song.mp3",
+    });
+    expect(result).toHaveProperty("document");
+    expect(result).toHaveProperty("fileName", "song.mp3");
+    expect(result).not.toHaveProperty("audio");
+    expect(result).not.toHaveProperty("ptt");
+  });
+
+  test("filename extension wins: mediaPath with no extension + filename .mp3 builds document", () => {
+    const result = buildWhatsAppOutboundPayload({
+      text: "caption here",
+      mediaPath: "/tmp/upload",
+      fileName: "song.mp3",
+    });
+    expect(result).toHaveProperty("document");
+    expect(result).toHaveProperty("fileName", "song.mp3");
+    expect(result).toHaveProperty("caption", "caption here");
+    expect(result).not.toHaveProperty("audio");
+    expect(result).not.toHaveProperty("ptt");
+  });
+
+  test("caption works for .mp3 document", () => {
+    const result = buildWhatsAppOutboundPayload({
+      text: "here is the song",
+      mediaPath: "/tmp/song.mp3",
+      fileName: "song.mp3",
+    });
+    expect(result).toHaveProperty("caption", "here is the song");
+    expect(result).toHaveProperty("document");
   });
 
   test("returns attachment metadata without downloading when media is disabled", async () => {
