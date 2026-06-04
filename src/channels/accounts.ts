@@ -51,6 +51,8 @@ const SNAKE_TO_CAMEL: Record<string, string> = {
   send_attachments: "sendAttachments",
   attachment_mime_types: "attachmentMimeTypes",
   attachment_allowed_recipients: "attachmentAllowedRecipients",
+  waiting_behavior: "waitingBehavior",
+  waiting_message: "waitingMessage",
 };
 
 let warnedAboutDualKeys = false;

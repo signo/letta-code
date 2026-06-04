@@ -502,7 +502,7 @@ export interface WhatsAppChannelConfig {
   attachmentMimeTypes?: string[];
   /** JID allowlist for attachment recipients. ["*"] = no restriction. [] = no recipients allowed. Default: []. */
   attachmentAllowedRecipients?: string[];
-  /** Controls tool-work UX. Default "off": no waiting message, typing only. "message": sends waitingMessage after delay. */
+  /** Controls tool-work UX. Default "off": no typing indicator and no waiting message. "typing_indicator": sends/refreshes typing indicators. "message": sends typing indicators and delayed waitingMessage. */
   waitingBehavior?: WhatsAppWaitingBehavior;
   /** Custom message text for waitingBehavior="message". Default: "Let me do some work. I'll be back..." */
   waitingMessage?: string;
@@ -652,7 +652,7 @@ export interface WhatsAppChannelAccount extends ChannelAccountBase {
   attachmentMimeTypes?: string[];
   /** JID allowlist for attachment recipients. ["*"] = no restriction. [] = no recipients allowed. Default: []. */
   attachmentAllowedRecipients?: string[];
-  /** Controls tool-work UX. Default "off": no waiting message, typing only. "message": sends waitingMessage after delay. */
+  /** Controls tool-work UX. Default "off": no typing indicator and no waiting message. "typing_indicator": sends/refreshes typing indicators. "message": sends typing indicators and delayed waitingMessage. */
   waitingBehavior?: WhatsAppWaitingBehavior;
   /** Custom message text for waitingBehavior="message". Default: "Let me do some work. I'll be back..." */
   waitingMessage?: string;
