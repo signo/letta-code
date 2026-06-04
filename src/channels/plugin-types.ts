@@ -10,6 +10,7 @@ import type {
   SlackChannelMode,
   TelegramGroupMode,
   WhatsAppGroupMode,
+  WhatsAppWaitingBehavior,
 } from "./types";
 
 export interface ChannelPluginMetadata {
@@ -165,6 +166,8 @@ export interface ChannelPluginAccountPatch {
   transcribeVoice?: boolean;
   downloadMedia?: boolean;
   mediaMaxBytes?: number;
+  waitingBehavior?: WhatsAppWaitingBehavior;
+  waitingMessage?: string;
 }
 
 export type ChannelAccountPatch = ChannelCommonAccountPatch &

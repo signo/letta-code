@@ -294,7 +294,11 @@ export function createWhatsAppAdapter(
     }
   }
 
-  async function setTyping(chatId: string, typing: boolean): Promise<void> {
+  async function setTyping(
+    chatId: string,
+    typing: boolean,
+    options?: { force?: boolean },
+  ): Promise<void> {
     const targetJid = resolveSendJid({
       chatId,
       selfPhoneJid,
@@ -303,7 +307,7 @@ export function createWhatsAppAdapter(
       sock,
     });
     if (typing) {
-      if (activeTypingChats.has(chatId)) return;
+      if (activeTypingChats.has(chatId) && !options?.force) return;
       activeTypingChats.add(chatId);
       try {
         await sock?.sendPresenceUpdate?.(TYPING_PRESENCE, targetJid);
@@ -319,6 +323,12 @@ export function createWhatsAppAdapter(
     } catch {
       // best effort
     }
+  }
+
+  /** Whether the current waitingBehavior enables typing indicators. */
+  function isTypingEnabled(): boolean {
+    const behavior = account.waitingBehavior ?? "off";
+    return behavior === "typing_indicator" || behavior === "message";
   }
 
   function scheduleReconnect(reason?: string): void {
@@ -795,9 +805,11 @@ export function createWhatsAppAdapter(
       }
 
       if (event.type === "processing") {
-        for (const source of event.sources) {
-          if (source.channel !== CHANNEL_ID) continue;
-          await setTyping(source.chatId, true);
+        if (isTypingEnabled()) {
+          for (const source of event.sources) {
+            if (source.channel !== CHANNEL_ID) continue;
+            await setTyping(source.chatId, true);
+          }
         }
         return;
       }
@@ -805,7 +817,9 @@ export function createWhatsAppAdapter(
       if (event.type === "finished") {
         for (const source of event.sources) {
           if (source.channel !== CHANNEL_ID) continue;
-          await setTyping(source.chatId, false);
+          if (isTypingEnabled()) {
+            await setTyping(source.chatId, false);
+          }
 
           // Cancel any pending waiting-message timer for this turn+source.
           const sourceKey = source.messageId
@@ -853,9 +867,10 @@ export function createWhatsAppAdapter(
 
       // typing_refresh — keep WhatsApp typing indicator alive during processing.
       if (event.type === "typing_refresh") {
+        if (!isTypingEnabled()) return;
         for (const source of event.sources) {
           if (source.channel !== CHANNEL_ID) continue;
-          await setTyping(source.chatId, true);
+          await setTyping(source.chatId, true, { force: true });
         }
         return;
       }

@@ -185,7 +185,9 @@ async function createStartedAdapter(
   return adapter;
 }
 
-describe("WhatsApp adapter presence integration", () => {
+// ── Read receipt tests ────────────────────────────────────────────
+
+describe("WhatsApp read receipts", () => {
   test("inbound DM triggers readMessages call", async () => {
     const mockData = makeMockSock();
     const adapter = await createStartedAdapter(mockData);
@@ -251,10 +253,92 @@ describe("WhatsApp adapter presence integration", () => {
     expect(mockData.readMessagesLog.length).toBe(0);
     await adapter.stop();
   });
+});
 
-  test("processing lifecycle starts typing indicator", async () => {
+// ── waitingBehavior="off" (default) ──────────────────────────────
+
+describe("waitingBehavior=off (default)", () => {
+  test("processing does NOT start typing when waitingBehavior is off", async () => {
     const mockData = makeMockSock();
+    const adapter = await createStartedAdapter(mockData, {
+      waitingBehavior: "off",
+    });
+
+    await adapter.handleTurnLifecycleEvent!({
+      type: "processing",
+      batchId: "batch-1",
+      sources: [makeSource()],
+    });
+
+    expect(mockData.presenceLog.some((p) => p.presence === "composing")).toBe(
+      false,
+    );
+
+    await adapter.stop();
+  });
+
+  test("default (undefined waitingBehavior) suppresses typing", async () => {
+    const mockData = makeMockSock();
+    // No waitingBehavior set — defaults to "off"
     const adapter = await createStartedAdapter(mockData);
+
+    await adapter.handleTurnLifecycleEvent!({
+      type: "processing",
+      batchId: "batch-1",
+      sources: [makeSource()],
+    });
+
+    expect(mockData.presenceLog.some((p) => p.presence === "composing")).toBe(
+      false,
+    );
+
+    await adapter.stop();
+  });
+
+  test("tool_waiting does NOT send message when waitingBehavior is off", async () => {
+    const mockData = makeMockSock();
+    const adapter = await createStartedAdapter(mockData, {
+      waitingBehavior: "off",
+    });
+
+    await adapter.handleTurnLivenessEvent!({
+      type: "tool_waiting",
+      batchId: "batch-1",
+      sources: [makeSource()],
+      toolCategory: "bash",
+    });
+
+    await new Promise((resolve) => setTimeout(resolve, 200));
+
+    expect(mockData.sendMessageResults.length).toBe(0);
+    await adapter.stop();
+  });
+
+  test("typing_refresh is a no-op when waitingBehavior is off", async () => {
+    const mockData = makeMockSock();
+    const adapter = await createStartedAdapter(mockData, {
+      waitingBehavior: "off",
+    });
+
+    await adapter.handleTurnLivenessEvent!({
+      type: "typing_refresh",
+      batchId: "batch-1",
+      sources: [makeSource()],
+    });
+
+    expect(mockData.presenceLog.length).toBe(0);
+    await adapter.stop();
+  });
+});
+
+// ── waitingBehavior="typing_indicator" ────────────────────────────
+
+describe("waitingBehavior=typing_indicator", () => {
+  test("processing starts typing indicator", async () => {
+    const mockData = makeMockSock();
+    const adapter = await createStartedAdapter(mockData, {
+      waitingBehavior: "typing_indicator",
+    });
 
     await adapter.handleTurnLifecycleEvent!({
       type: "processing",
@@ -269,9 +353,45 @@ describe("WhatsApp adapter presence integration", () => {
     await adapter.stop();
   });
 
-  test("typing_refresh keeps typing alive", async () => {
+  test("typing_refresh sends another composing presence (force refresh)", async () => {
     const mockData = makeMockSock();
-    const adapter = await createStartedAdapter(mockData);
+    const adapter = await createStartedAdapter(mockData, {
+      waitingBehavior: "typing_indicator",
+    });
+    const source = makeSource();
+
+    // Start typing
+    await adapter.handleTurnLifecycleEvent!({
+      type: "processing",
+      batchId: "batch-1",
+      sources: [source],
+    });
+
+    const composingAfterStart = mockData.presenceLog.filter(
+      (p) => p.presence === "composing",
+    ).length;
+    expect(composingAfterStart).toBeGreaterThanOrEqual(1);
+
+    // typing_refresh should force another composing
+    await adapter.handleTurnLivenessEvent!({
+      type: "typing_refresh",
+      batchId: "batch-1",
+      sources: [source],
+    });
+
+    const composingAfterRefresh = mockData.presenceLog.filter(
+      (p) => p.presence === "composing",
+    ).length;
+    expect(composingAfterRefresh).toBeGreaterThan(composingAfterStart);
+
+    await adapter.stop();
+  });
+
+  test("finished stops typing (paused presence)", async () => {
+    const mockData = makeMockSock();
+    const adapter = await createStartedAdapter(mockData, {
+      waitingBehavior: "typing_indicator",
+    });
     const source = makeSource();
 
     await adapter.handleTurnLifecycleEvent!({
@@ -280,24 +400,6 @@ describe("WhatsApp adapter presence integration", () => {
       sources: [source],
     });
 
-    const typingCount = mockData.presenceLog.filter(
-      (p) => p.presence === "composing",
-    ).length;
-    expect(typingCount).toBeGreaterThanOrEqual(1);
-
-    // typing_refresh is idempotent when chat is already in activeTypingChats
-    await adapter.handleTurnLivenessEvent!({
-      type: "typing_refresh",
-      batchId: "batch-1",
-      sources: [source],
-    });
-
-    // No paused sent
-    expect(mockData.presenceLog.some((p) => p.presence === "paused")).toBe(
-      false,
-    );
-
-    // Finish, then restart to verify typing_refresh works on fresh typing
     await adapter.handleTurnLifecycleEvent!({
       type: "finished",
       batchId: "batch-1",
@@ -305,33 +407,57 @@ describe("WhatsApp adapter presence integration", () => {
       outcome: "completed",
     });
 
-    const pausedAfterFinish = mockData.presenceLog.filter(
-      (p) => p.presence === "paused",
-    ).length;
-
-    // New turn starts typing
-    await adapter.handleTurnLifecycleEvent!({
-      type: "processing",
-      batchId: "batch-2",
-      sources: [source],
-    });
-
-    // typing_refresh keeps it alive — no new paused
-    await adapter.handleTurnLivenessEvent!({
-      type: "typing_refresh",
-      batchId: "batch-2",
-      sources: [source],
-    });
-
-    const pausedNow = mockData.presenceLog.filter(
-      (p) => p.presence === "paused",
-    ).length;
-    expect(pausedNow).toBe(pausedAfterFinish);
+    expect(mockData.presenceLog.some((p) => p.presence === "paused")).toBe(
+      true,
+    );
 
     await adapter.stop();
   });
 
-  test("tool_waiting sends waiting message when waitingBehavior=message", async () => {
+  test("tool_waiting does NOT send waiting message", async () => {
+    const mockData = makeMockSock();
+    const adapter = await createStartedAdapter(mockData, {
+      waitingBehavior: "typing_indicator",
+    });
+
+    await adapter.handleTurnLivenessEvent!({
+      type: "tool_waiting",
+      batchId: "batch-1",
+      sources: [makeSource()],
+      toolCategory: "bash",
+    });
+
+    await new Promise((resolve) => setTimeout(resolve, 200));
+
+    // typing_indicator mode does not send waiting messages
+    expect(mockData.sendMessageResults.length).toBe(0);
+    await adapter.stop();
+  });
+});
+
+// ── waitingBehavior="message" ─────────────────────────────────────
+
+describe("waitingBehavior=message", () => {
+  test("processing starts typing indicator", async () => {
+    const mockData = makeMockSock();
+    const adapter = await createStartedAdapter(mockData, {
+      waitingBehavior: "message",
+    });
+
+    await adapter.handleTurnLifecycleEvent!({
+      type: "processing",
+      batchId: "batch-1",
+      sources: [makeSource()],
+    });
+
+    expect(mockData.presenceLog.some((p) => p.presence === "composing")).toBe(
+      true,
+    );
+
+    await adapter.stop();
+  });
+
+  test("tool_waiting sends delayed waiting message", async () => {
     const mockData = makeMockSock();
     const adapter = await createStartedAdapter(mockData, {
       waitingBehavior: "message",
@@ -356,9 +482,12 @@ describe("WhatsApp adapter presence integration", () => {
     await adapter.stop();
   });
 
-  test("waitingBehavior=off suppresses tool_waiting actions", async () => {
+  test("tool_waiting uses default waiting message when none configured", async () => {
     const mockData = makeMockSock();
-    const adapter = await createStartedAdapter(mockData);
+    const adapter = await createStartedAdapter(mockData, {
+      waitingBehavior: "message",
+      // No waitingMessage set — should use default
+    });
 
     await adapter.handleTurnLivenessEvent!({
       type: "tool_waiting",
@@ -367,15 +496,25 @@ describe("WhatsApp adapter presence integration", () => {
       toolCategory: "bash",
     });
 
-    await new Promise((resolve) => setTimeout(resolve, 200));
+    await new Promise((resolve) => setTimeout(resolve, 3500));
 
-    expect(mockData.sendMessageResults.length).toBe(0);
+    const textMessages = mockData.sendMessageResults.filter(
+      (r) => typeof (r.payload as Record<string, unknown>).text === "string",
+    );
+    expect(textMessages.length).toBeGreaterThan(0);
+    // Default message
+    expect((textMessages[0]!.payload as Record<string, unknown>).text).toBe(
+      "Let me do some work. I'll be back...",
+    );
+
     await adapter.stop();
   });
 
-  test("finished lifecycle stops typing (paused presence)", async () => {
+  test("typing_refresh sends another composing presence", async () => {
     const mockData = makeMockSock();
-    const adapter = await createStartedAdapter(mockData);
+    const adapter = await createStartedAdapter(mockData, {
+      waitingBehavior: "message",
+    });
     const source = makeSource();
 
     await adapter.handleTurnLifecycleEvent!({
@@ -384,23 +523,34 @@ describe("WhatsApp adapter presence integration", () => {
       sources: [source],
     });
 
-    await adapter.handleTurnLifecycleEvent!({
-      type: "finished",
+    const composingAfterStart = mockData.presenceLog.filter(
+      (p) => p.presence === "composing",
+    ).length;
+
+    await adapter.handleTurnLivenessEvent!({
+      type: "typing_refresh",
       batchId: "batch-1",
       sources: [source],
-      outcome: "completed",
     });
 
-    expect(mockData.presenceLog.some((p) => p.presence === "paused")).toBe(
-      true,
-    );
+    const composingAfterRefresh = mockData.presenceLog.filter(
+      (p) => p.presence === "composing",
+    ).length;
+    expect(composingAfterRefresh).toBeGreaterThan(composingAfterStart);
 
     await adapter.stop();
   });
+});
 
-  test("sendDirectReply sends composing before and paused after", async () => {
+// ── sendDirectReply presence (independent of waitingBehavior) ─────
+
+describe("sendDirectReply presence", () => {
+  test("sends composing before and paused after regardless of waitingBehavior", async () => {
     const mockData = makeMockSock();
-    const adapter = await createStartedAdapter(mockData);
+    // waitingBehavior=off — sendDirectReply still does presence
+    const adapter = await createStartedAdapter(mockData, {
+      waitingBehavior: "off",
+    });
 
     await adapter.sendDirectReply!(
       "584149145006@s.whatsapp.net",

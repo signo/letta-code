@@ -363,7 +363,7 @@ export type DmPolicy = "pairing" | "allowlist" | "open";
 export type SlackChannelMode = "socket";
 export type TelegramGroupMode = "open" | "mention-only";
 export type WhatsAppGroupMode = "disabled" | "mention" | "open";
-export type WhatsAppWaitingBehavior = "off" | "message";
+export type WhatsAppWaitingBehavior = "off" | "typing_indicator" | "message";
 
 export interface ChannelAccountBinding {
   agentId: string | null;
