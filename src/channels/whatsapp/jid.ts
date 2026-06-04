@@ -1,3 +1,5 @@
+import { lookupLidMapping } from "./baileysCompat";
+
 export const WHATSAPP_CHANNEL_ID = "whatsapp";
 export const WHATSAPP_PHONE_SUFFIX = "@s.whatsapp.net";
 export const WHATSAPP_LID_SUFFIX = "@lid";
@@ -108,13 +110,8 @@ export function resolveLidToPhoneJid(params: {
   const senderPn = normalizeMaybePhoneJid(msg?.key?.senderPn ?? undefined);
   if (senderPn) return senderPn;
 
-  const repo = (
-    sock as
-      | { signalRepository?: { lidMapping?: Map<string, string> } }
-      | undefined
-  )?.signalRepository;
   const mapped = normalizeMaybePhoneJid(
-    repo?.lidMapping?.get(stripDeviceSuffix(lidJid)),
+    lookupLidMapping(sock, stripDeviceSuffix(lidJid)),
   );
   if (mapped) return mapped;
 
@@ -139,13 +136,8 @@ export function resolveSendJid(params: {
   const mapped = normalizeMaybePhoneJid(lidToJid?.get(normalized));
   if (mapped) return mapped;
 
-  const repo = (
-    sock as
-      | { signalRepository?: { lidMapping?: Map<string, string> } }
-      | undefined
-  )?.signalRepository;
   const signalMapped = normalizeMaybePhoneJid(
-    repo?.lidMapping?.get(normalized),
+    lookupLidMapping(sock, normalized),
   );
   if (signalMapped) return signalMapped;
 
