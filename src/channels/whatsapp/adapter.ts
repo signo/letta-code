@@ -9,6 +9,7 @@ import type {
   OutboundChannelMessage,
   WhatsAppChannelAccount,
 } from "@/channels/types";
+import { matchesWildcardList } from "@/channels/wildcardList";
 import {
   isGroupJid,
   isLidJid,
@@ -29,7 +30,6 @@ import {
 } from "./media";
 import { loadWhatsAppModule } from "./runtime";
 import { createWhatsAppSocket, getWhatsAppAuthDir } from "./session";
-import { matchesWildcardList } from "@/channels/wildcardList";
 import { setWhatsAppConnectionState } from "./state";
 
 const CHANNEL_ID = "whatsapp";
@@ -37,6 +37,9 @@ const DEDUPE_MAX_SIZE = 5000;
 const RECONNECT_MAX_MS = 30_000;
 const MAX_MENTION_PATTERN_LENGTH = 256;
 const MENTION_MATCH_TEXT_MAX_LENGTH = 2000;
+const TYPING_PRESENCE = "composing";
+const IDLE_PRESENCE = "paused";
+const WAITING_MESSAGE_DELAY_MS = 3000;
 
 type EventEmitterLike = {
   on?: (event: string, handler: (payload: unknown) => void) => void;
@@ -53,6 +56,7 @@ type WhatsAppSocket = {
     options?: Record<string, unknown>,
   ) => Promise<{ key?: { id?: string }; message?: unknown }>;
   sendPresenceUpdate?: (presence: string, jid?: string) => Promise<void>;
+  readMessages?: (keys: Array<Record<string, unknown>>) => Promise<void>;
   groupMetadata?: (jid: string) => Promise<{ subject?: string }>;
 };
 
@@ -186,6 +190,31 @@ function getLifecycleErrorReplyKey(source: ChannelTurnSource): string | null {
   return `${source.chatId}:${source.messageId ?? ""}`;
 }
 
+export function shouldMarkWhatsAppReadReceipt(params: {
+  chatType: "direct" | "channel";
+  accepted: boolean;
+}): boolean {
+  const { chatType, accepted } = params;
+  if (!accepted) return false;
+  if (chatType !== "direct") return false;
+  return true;
+}
+
+export function buildWhatsAppReadReceiptKeys(params: {
+  remoteJid: string;
+  messageId: string;
+  participant?: string | null;
+}): Array<Record<string, unknown>> {
+  const base: Record<string, unknown> = {
+    remoteJid: params.remoteJid,
+    id: params.messageId,
+  };
+  if (params.participant) {
+    base.participant = params.participant;
+  }
+  return [base];
+}
+
 export function createWhatsAppAdapter(
   account: WhatsAppChannelAccount,
 ): ChannelAdapter {
@@ -206,6 +235,9 @@ export function createWhatsAppAdapter(
   const seenMessageIds = new Set<string>();
   const lidToJid = new Map<string, string>();
   const messageStore = new Map<string, unknown>();
+  /** Delayed waiting-message timers keyed by batch+source. */
+  const waitingMessageTimers = new Map<string, ReturnType<typeof setTimeout>>();
+  const activeTypingChats = new Set<string>();
 
   // Per-key state for feedback throttle: when a message queues while the
   // turn is active, we send at most one "still processing" feedback per
@@ -259,6 +291,33 @@ export function createWhatsAppAdapter(
       downloadContentFromMessage = helper as unknown as NonNullable<
         typeof downloadContentFromMessage
       >;
+    }
+  }
+
+  async function setTyping(chatId: string, typing: boolean): Promise<void> {
+    const targetJid = resolveSendJid({
+      chatId,
+      selfPhoneJid,
+      selfLid,
+      lidToJid,
+      sock,
+    });
+    if (typing) {
+      if (activeTypingChats.has(chatId)) return;
+      activeTypingChats.add(chatId);
+      try {
+        await sock?.sendPresenceUpdate?.(TYPING_PRESENCE, targetJid);
+      } catch {
+        // best effort
+      }
+      return;
+    }
+    if (!activeTypingChats.has(chatId)) return;
+    activeTypingChats.delete(chatId);
+    try {
+      await sock?.sendPresenceUpdate?.(IDLE_PRESENCE, targetJid);
+    } catch {
+      // best effort
     }
   }
 
@@ -502,6 +561,23 @@ export function createWhatsAppAdapter(
       console.log(
         `[WhatsApp:${account.accountId}] inbound chatId=${chatId} sender=${senderId} text="${preview(body)}"`,
       );
+      if (
+        shouldMarkWhatsAppReadReceipt({
+          chatType: inbound.chatType ?? "direct",
+          accepted: true,
+        })
+      ) {
+        try {
+          const keys = buildWhatsAppReadReceiptKeys({
+            remoteJid,
+            messageId,
+            participant: msg.key?.participant ?? null,
+          });
+          await sock?.readMessages?.(keys);
+        } catch {
+          // best-effort read receipt
+        }
+      }
       await adapter.onMessage?.(inbound);
     }
   }
@@ -583,6 +659,7 @@ export function createWhatsAppAdapter(
       if (!running) return;
       stopping = true;
       running = false;
+      activeTypingChats.clear();
       if (reconnectTimer) {
         clearTimeout(reconnectTimer);
         reconnectTimer = null;
@@ -658,25 +735,38 @@ export function createWhatsAppAdapter(
         lidToJid,
         sock,
       });
-      const result = await sendToWhatsApp(
-        targetJid,
-        { text },
-        buildQuotedOptions(targetJid, options?.replyToMessageId),
-      );
-      const messageId = result.key?.id ?? "";
-      rememberSent(messageId, result);
-      logSend(
-        "info",
-        "whatsapp_direct_reply_sent",
-        {
-          chatId,
+      try {
+        await sock?.sendPresenceUpdate?.(TYPING_PRESENCE, targetJid);
+      } catch {
+        // Presence is best-effort.
+      }
+      try {
+        const result = await sendToWhatsApp(
           targetJid,
-          messageId,
-          remoteJid: (result.key as { remoteJid?: string } | undefined)
-            ?.remoteJid,
-        },
-        "WhatsApp direct reply sent",
-      );
+          { text },
+          buildQuotedOptions(targetJid, options?.replyToMessageId),
+        );
+        const messageId = result.key?.id ?? "";
+        rememberSent(messageId, result);
+        logSend(
+          "info",
+          "whatsapp_direct_reply_sent",
+          {
+            chatId,
+            targetJid,
+            messageId,
+            remoteJid: (result.key as { remoteJid?: string } | undefined)
+              ?.remoteJid,
+          },
+          "WhatsApp direct reply sent",
+        );
+      } finally {
+        try {
+          await sock?.sendPresenceUpdate?.(IDLE_PRESENCE, targetJid);
+        } catch {
+          // Presence is best-effort.
+        }
+      }
     },
 
     async handleControlRequestEvent(event: ChannelControlRequestEvent) {
@@ -694,23 +784,40 @@ export function createWhatsAppAdapter(
       event: ChannelTurnLifecycleEvent,
     ): Promise<void> {
       if (!running) return;
+      if (event.type === "queued") return;
 
       // Clear queued feedback cooldown only when a turn actually starts or
-      // finishes — NOT on "queued" lifecycle events.  The "queued" event
-      // fires for every inbound message during an active turn (before
-      // the queued_feedback liveness event).  If we cleared the cooldown
-      // here, each new queued message would reset it before
-      // handleTurnLivenessEvent gets a chance to protect it, defeating
-      // the throttle entirely.
-      const sources =
-        event.type === "finished" || event.type === "processing"
-          ? event.sources
-          : [];
-      for (const source of sources) {
-        queuedFeedbackByKey.delete(source.chatId);
+      // finishes — NOT on "queued" lifecycle events.
+      if (event.type === "finished" || event.type === "processing") {
+        for (const source of event.sources) {
+          queuedFeedbackByKey.delete(source.chatId);
+        }
+      }
+
+      if (event.type === "processing") {
+        for (const source of event.sources) {
+          if (source.channel !== CHANNEL_ID) continue;
+          await setTyping(source.chatId, true);
+        }
+        return;
       }
 
       if (event.type === "finished") {
+        for (const source of event.sources) {
+          if (source.channel !== CHANNEL_ID) continue;
+          await setTyping(source.chatId, false);
+
+          // Cancel any pending waiting-message timer for this turn+source.
+          const sourceKey = source.messageId
+            ? `${event.batchId}:${source.messageId}`
+            : `${event.batchId}:${source.chatId}`;
+          const pendingTimer = waitingMessageTimers.get(sourceKey);
+          if (pendingTimer) {
+            clearTimeout(pendingTimer);
+            waitingMessageTimers.delete(sourceKey);
+          }
+        }
+
         const errorText =
           event.outcome === "error" ? event.error?.trim() : null;
         if (errorText) {
@@ -743,6 +850,53 @@ export function createWhatsAppAdapter(
       event: ChannelTurnLivenessEvent,
     ): Promise<void> {
       if (!running) return;
+
+      // typing_refresh — keep WhatsApp typing indicator alive during processing.
+      if (event.type === "typing_refresh") {
+        for (const source of event.sources) {
+          if (source.channel !== CHANNEL_ID) continue;
+          await setTyping(source.chatId, true);
+        }
+        return;
+      }
+
+      // tool_waiting — send UX text based on waitingBehavior.
+      if (event.type === "tool_waiting") {
+        const behavior = account.waitingBehavior ?? "off";
+        for (const source of event.sources) {
+          if (source.channel !== CHANNEL_ID) continue;
+
+          if (behavior === "off") continue;
+
+          // "message" mode — send configured waiting text after a short delay
+          // to avoid noisy messages for fast tool calls.
+          if (behavior === "message") {
+            const sourceKey = source.messageId
+              ? `${event.batchId}:${source.messageId}`
+              : `${event.batchId}:${source.chatId}`;
+            if (waitingMessageTimers.has(sourceKey)) {
+              continue;
+            }
+            const timer = setTimeout(async () => {
+              waitingMessageTimers.delete(sourceKey);
+              const progressText =
+                account.waitingMessage ??
+                "Let me do some work. I'll be back...";
+              try {
+                await adapter.sendDirectReply(source.chatId, progressText, {
+                  replyToMessageId: source.messageId,
+                });
+              } catch {
+                // Best-effort.
+              }
+            }, WAITING_MESSAGE_DELAY_MS);
+            waitingMessageTimers.set(sourceKey, timer);
+          }
+        }
+        return;
+      }
+
+      // queued_feedback — auto-progress for queued messages during active turns.
       if (event.type === "queued_feedback") {
         const { sources, queuedCount } = event;
         if (queuedCount < 1) return;

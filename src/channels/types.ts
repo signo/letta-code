@@ -363,6 +363,7 @@ export type DmPolicy = "pairing" | "allowlist" | "open";
 export type SlackChannelMode = "socket";
 export type TelegramGroupMode = "open" | "mention-only";
 export type WhatsAppGroupMode = "disabled" | "mention" | "open";
+export type WhatsAppWaitingBehavior = "off" | "message";
 
 export interface ChannelAccountBinding {
   agentId: string | null;
@@ -501,6 +502,10 @@ export interface WhatsAppChannelConfig {
   attachmentMimeTypes?: string[];
   /** JID allowlist for attachment recipients. ["*"] = no restriction. [] = no recipients allowed. Default: []. */
   attachmentAllowedRecipients?: string[];
+  /** Controls tool-work UX. Default "off": no waiting message, typing only. "message": sends waitingMessage after delay. */
+  waitingBehavior?: WhatsAppWaitingBehavior;
+  /** Custom message text for waitingBehavior="message". Default: "Let me do some work. I'll be back..." */
+  waitingMessage?: string;
 }
 
 export type ChannelConfig =
@@ -647,6 +652,10 @@ export interface WhatsAppChannelAccount extends ChannelAccountBase {
   attachmentMimeTypes?: string[];
   /** JID allowlist for attachment recipients. ["*"] = no restriction. [] = no recipients allowed. Default: []. */
   attachmentAllowedRecipients?: string[];
+  /** Controls tool-work UX. Default "off": no waiting message, typing only. "message": sends waitingMessage after delay. */
+  waitingBehavior?: WhatsAppWaitingBehavior;
+  /** Custom message text for waitingBehavior="message". Default: "Let me do some work. I'll be back..." */
+  waitingMessage?: string;
 }
 
 export type ChannelAccount =
