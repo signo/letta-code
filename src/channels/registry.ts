@@ -519,6 +519,12 @@ export class ChannelRegistry {
     return this.adapters.get(this.getAdapterKey(channelId, accountId)) ?? null;
   }
 
+  listAdapters(channelId?: string): ChannelAdapter[] {
+    const all = Array.from(this.adapters.values());
+    if (!channelId) return all;
+    return all.filter((a) => a.channelId === channelId);
+  }
+
   getActiveChannelIds(): string[] {
     return Array.from(this.adapters.values())
       .filter((adapter) => adapter.isRunning())

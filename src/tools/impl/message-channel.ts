@@ -10,6 +10,7 @@
  * plugin.messageActions, following the OpenClaw-style architecture.
  */
 
+import { getChannelAccount } from "@/channels/accounts";
 import {
   isSupportedChannelId,
   loadChannelPlugin,
@@ -27,6 +28,7 @@ import type {
   OutboundChannelMessage,
   SupportedChannelId,
 } from "@/channels/types";
+import { allowedUsersIncludes } from "@/channels/whatsapp/jid";
 
 const TELEGRAM_CHANNEL_ID = "telegram";
 const TELEGRAM_PLACEHOLDER_PREFIX = "LCTELEGRAMHTMLPLACEHOLDER";
@@ -774,6 +776,77 @@ async function resolveExplicitMessageChannelContext(params: {
   };
 }
 
+/**
+ * Check WhatsApp DM policy for a proactive (no-route) send.
+ * Returns error string if denied, null if allowed.
+ *
+ * Ported from rollback src/tools/impl/MessageChannel.ts:781-816.
+ * Uses allowedUsersIncludes (restored in PR 1) for wildcard + exact match.
+ */
+function checkWhatsAppProactiveDmPolicy(
+  account: { dmPolicy: string; allowedUsers: string[] },
+  recipientJid: string,
+): string | null {
+  const { dmPolicy, allowedUsers } = account;
+
+  if (dmPolicy === "pairing") {
+    // Pairing mode: recipient must have paired (established a route).
+    // For proactive outbound, no route exists, so denied.
+    return "Error: WhatsApp DM policy is 'pairing'. The recipient must first send a message to this account.";
+  }
+
+  if (dmPolicy === "allowlist") {
+    if (!allowedUsersIncludes(allowedUsers, recipientJid)) {
+      return `Error: WhatsApp DM policy is 'allowlist'. Recipient "${recipientJid}" is not in the allowed users list.`;
+    }
+    return null;
+  }
+
+  // Explicit allow for open policy.
+  if (dmPolicy === "open") return null;
+
+  // Unknown policy: fail closed.
+  return `Error: Unknown WhatsApp DM policy "${dmPolicy}".`;
+}
+
+/**
+ * Resolve a WhatsApp adapter for proactive outbound (no route).
+ * If accountId is provided, validate it. Otherwise require exactly one
+ * WhatsApp adapter.
+ *
+ * Returns { adapter, accountId } or an error string.
+ */
+function resolveWhatsAppProactiveAdapter(
+  registry: NonNullable<ReturnType<typeof getChannelRegistry>>,
+  accountId: string | undefined,
+): { adapter: ChannelAdapter; accountId: string } | string {
+  const adapters = registry.listAdapters("whatsapp");
+
+  if (accountId) {
+    const adapter = registry.getAdapter("whatsapp", accountId);
+    if (!adapter) {
+      return `Error: WhatsApp account "${accountId}" is not configured or not running.`;
+    }
+    if (!adapter.isRunning()) {
+      return `Error: WhatsApp account "${accountId}" is not currently running.`;
+    }
+    return { adapter, accountId };
+  }
+
+  if (adapters.length === 0) {
+    return "Error: No WhatsApp accounts are configured.";
+  }
+  if (adapters.length > 1) {
+    return "Error: Multiple WhatsApp accounts exist. Please specify accountId.";
+  }
+
+  const single = adapters[0]!;
+  if (!single.isRunning()) {
+    return `Error: WhatsApp account "${single.accountId}" is not currently running.`;
+  }
+  return { adapter: single, accountId: single.accountId! };
+}
+
 export async function message_channel(
   args: MessageChannelArgs,
 ): Promise<string> {
@@ -813,31 +886,74 @@ export async function message_channel(
         resolvedAccountId,
       );
       if (!route) {
-        return resolvedAccountId
-          ? `Error: No route for chat_id "${input.chatId}" on "${input.channel}" account "${resolvedAccountId}" for this agent/conversation.`
-          : `Error: No route for chat_id "${input.chatId}" on "${input.channel}" for this agent/conversation. If multiple channel accounts can receive this chat, pass accountId (from the channel notification's account_id) to disambiguate.`;
-      }
+        // Proactive outbound: WhatsApp first-contact send (no route exists).
+        // Requires explicit chatId and account resolution per policy.
+        if (input.channel === "whatsapp") {
+          const resolved = resolveWhatsAppProactiveAdapter(
+            registry!,
+            resolvedAccountId,
+          );
+          if (typeof resolved === "string") return resolved;
 
-      const adapter = registry.getAdapter(input.channel, route.accountId);
-      if (!adapter) {
-        return `Error: Channel "${input.channel}" is not configured or not running.`;
-      }
+          // Policy check: dmPolicy + allowedUsers.
+          const account = getChannelAccount("whatsapp", resolved.accountId);
+          if (!account || account.channel !== "whatsapp") {
+            // No account config — can't verify policy; fail closed.
+            return resolvedAccountId
+              ? `Error: No route for chat_id "${input.chatId}" on "${input.channel}" account "${resolvedAccountId}" for this agent/conversation.`
+              : `Error: No route for chat_id "${input.chatId}" on "${input.channel}" for this agent/conversation.`;
+          }
+          const policyError = checkWhatsAppProactiveDmPolicy(
+            account,
+            input.chatId,
+          );
+          if (policyError) return policyError;
 
-      if (!adapter.isRunning()) {
-        return `Error: Channel "${input.channel}" is not currently running.`;
-      }
+          const plugin = await loadChannelPlugin("whatsapp");
+          const fallbackRoute = buildSyntheticChannelRoute({
+            scope,
+            accountId: resolved.accountId,
+            chatId: input.chatId,
+            chatType: "direct",
+          });
+          executionContext = {
+            request: buildMessageChannelRequest(
+              input,
+              input.chatId,
+              input.threadId,
+            ),
+            route: fallbackRoute,
+            adapter: resolved.adapter,
+            plugin,
+          };
+        } else {
+          return resolvedAccountId
+            ? `Error: No route for chat_id "${input.chatId}" on "${input.channel}" account "${resolvedAccountId}" for this agent/conversation.`
+            : `Error: No route for chat_id "${input.chatId}" on "${input.channel}" for this agent/conversation. If multiple channel accounts can receive this chat, pass accountId (from the channel notification's account_id) to disambiguate.`;
+        }
+      } else {
+        // Existing route found — standard routed send.
+        const adapter = registry.getAdapter(input.channel, route.accountId);
+        if (!adapter) {
+          return `Error: Channel "${input.channel}" is not configured or not running.`;
+        }
 
-      const plugin = await loadChannelPlugin(input.channel);
-      executionContext = {
-        request: buildMessageChannelRequest(
-          input,
-          input.chatId,
-          input.threadId,
-        ),
-        route,
-        adapter,
-        plugin,
-      };
+        if (!adapter.isRunning()) {
+          return `Error: Channel "${input.channel}" is not currently running.`;
+        }
+
+        const plugin = await loadChannelPlugin(input.channel);
+        executionContext = {
+          request: buildMessageChannelRequest(
+            input,
+            input.chatId,
+            input.threadId,
+          ),
+          route,
+          adapter,
+          plugin,
+        };
+      }
     } else {
       executionContext = await resolveExplicitMessageChannelContext({
         input,
