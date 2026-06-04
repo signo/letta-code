@@ -43,6 +43,9 @@ function makeWhatsAppAccount(
     dmPolicy?: "pairing" | "allowlist" | "open";
     allowedUsers?: string[];
     agentId?: string | null;
+    sendAttachments?: boolean;
+    attachmentMimeTypes?: string[];
+    attachmentAllowedRecipients?: string[];
   } = {},
 ) {
   return {
@@ -60,6 +63,9 @@ function makeWhatsAppAccount(
     agentId: overrides.agentId ?? null,
     selfChatMode: true,
     groupMode: "disabled" as const,
+    sendAttachments: overrides.sendAttachments,
+    attachmentMimeTypes: overrides.attachmentMimeTypes,
+    attachmentAllowedRecipients: overrides.attachmentAllowedRecipients,
   };
 }
 
@@ -372,5 +378,549 @@ describe("WhatsApp proactive send (no route)", () => {
         text: "routed hello",
       }),
     );
+  });
+});
+
+describe("WhatsApp attachment policy (proactive upload-file)", () => {
+  afterEach(async () => {
+    const registry = getChannelRegistry();
+    if (registry) {
+      await registry.stopAll();
+    }
+    clearAllRoutes();
+    clearChannelAccountStores();
+    __testOverrideLoadChannelAccounts(null);
+    __testOverrideSaveChannelAccounts(null);
+  });
+
+  test('proactive upload-file succeeds with sendAttachments=true, attachmentAllowedRecipients=["*"], attachmentMimeTypes=["*"]', async () => {
+    __testOverrideLoadChannelAccounts(() => []);
+    __testOverrideSaveChannelAccounts(() => {});
+    const registry = new ChannelRegistry();
+
+    const { adapter, sendMessage } = makeWhatsAppAdapter("signo-digi");
+    registry.registerAdapter(adapter);
+
+    upsertChannelAccount(
+      "whatsapp",
+      makeWhatsAppAccount("signo-digi", {
+        dmPolicy: "open",
+        allowedUsers: ["*"],
+        sendAttachments: true,
+        attachmentMimeTypes: ["*"],
+        attachmentAllowedRecipients: ["*"],
+      }),
+    );
+
+    const result = await message_channel({
+      action: "upload-file",
+      channel: "whatsapp",
+      chat_id: "584149145006@s.whatsapp.net",
+      media: "/tmp/document.pdf",
+      filename: "document.pdf",
+      message: "see attached",
+      parentScope: {
+        agentId: "agent-1",
+        conversationId: "conv-1",
+      },
+    });
+
+    expect(result).toContain("Attachment sent to whatsapp");
+    expect(sendMessage).toHaveBeenCalledWith(
+      expect.objectContaining({
+        channel: "whatsapp",
+        accountId: "signo-digi",
+        chatId: "584149145006@s.whatsapp.net",
+        mediaPath: "/tmp/document.pdf",
+        fileName: "document.pdf",
+      }),
+    );
+  });
+
+  test("proactive upload-file denied when sendAttachments=false (default)", async () => {
+    __testOverrideLoadChannelAccounts(() => []);
+    __testOverrideSaveChannelAccounts(() => {});
+    const registry = new ChannelRegistry();
+
+    const { adapter, sendMessage } = makeWhatsAppAdapter("signo-digi");
+    registry.registerAdapter(adapter);
+
+    upsertChannelAccount(
+      "whatsapp",
+      makeWhatsAppAccount("signo-digi", {
+        dmPolicy: "open",
+        allowedUsers: ["*"],
+        // sendAttachments defaults to false — omitted
+      }),
+    );
+
+    const result = await message_channel({
+      action: "upload-file",
+      channel: "whatsapp",
+      chat_id: "584149145006@s.whatsapp.net",
+      media: "/tmp/document.pdf",
+      filename: "document.pdf",
+      parentScope: {
+        agentId: "agent-1",
+        conversationId: "conv-1",
+      },
+    });
+
+    expect(result).toContain("attachments disabled");
+    expect(sendMessage).not.toHaveBeenCalled();
+  });
+
+  test("proactive upload-file denied when attachmentAllowedRecipients=[]", async () => {
+    __testOverrideLoadChannelAccounts(() => []);
+    __testOverrideSaveChannelAccounts(() => {});
+    const registry = new ChannelRegistry();
+
+    const { adapter, sendMessage } = makeWhatsAppAdapter("signo-digi");
+    registry.registerAdapter(adapter);
+
+    upsertChannelAccount(
+      "whatsapp",
+      makeWhatsAppAccount("signo-digi", {
+        dmPolicy: "open",
+        allowedUsers: ["*"],
+        sendAttachments: true,
+        attachmentMimeTypes: ["*"],
+        attachmentAllowedRecipients: [],
+      }),
+    );
+
+    const result = await message_channel({
+      action: "upload-file",
+      channel: "whatsapp",
+      chat_id: "584149145006@s.whatsapp.net",
+      media: "/tmp/document.pdf",
+      filename: "document.pdf",
+      parentScope: {
+        agentId: "agent-1",
+        conversationId: "conv-1",
+      },
+    });
+
+    expect(result).toContain("no recipients are allowed");
+    expect(sendMessage).not.toHaveBeenCalled();
+  });
+
+  test("proactive upload-file denied when recipient not in attachmentAllowedRecipients", async () => {
+    __testOverrideLoadChannelAccounts(() => []);
+    __testOverrideSaveChannelAccounts(() => {});
+    const registry = new ChannelRegistry();
+
+    const { adapter, sendMessage } = makeWhatsAppAdapter("signo-digi");
+    registry.registerAdapter(adapter);
+
+    upsertChannelAccount(
+      "whatsapp",
+      makeWhatsAppAccount("signo-digi", {
+        dmPolicy: "open",
+        allowedUsers: ["*"],
+        sendAttachments: true,
+        attachmentMimeTypes: ["*"],
+        attachmentAllowedRecipients: ["+34600216777"],
+      }),
+    );
+
+    const result = await message_channel({
+      action: "upload-file",
+      channel: "whatsapp",
+      chat_id: "584149145006@s.whatsapp.net",
+      media: "/tmp/document.pdf",
+      filename: "document.pdf",
+      parentScope: {
+        agentId: "agent-1",
+        conversationId: "conv-1",
+      },
+    });
+
+    expect(result).toContain("not in the allowed recipients list");
+    expect(result).toContain("584149145006@s.whatsapp.net");
+    expect(sendMessage).not.toHaveBeenCalled();
+  });
+
+  test("proactive upload-file allowed when recipient matches explicit phone-normalized attachmentAllowedRecipients", async () => {
+    __testOverrideLoadChannelAccounts(() => []);
+    __testOverrideSaveChannelAccounts(() => {});
+    const registry = new ChannelRegistry();
+
+    const { adapter, sendMessage } = makeWhatsAppAdapter("signo-digi");
+    registry.registerAdapter(adapter);
+
+    upsertChannelAccount(
+      "whatsapp",
+      makeWhatsAppAccount("signo-digi", {
+        dmPolicy: "open",
+        allowedUsers: ["*"],
+        sendAttachments: true,
+        attachmentMimeTypes: ["*"],
+        attachmentAllowedRecipients: ["+584149145006"],
+      }),
+    );
+
+    const result = await message_channel({
+      action: "upload-file",
+      channel: "whatsapp",
+      chat_id: "584149145006@s.whatsapp.net",
+      media: "/tmp/document.pdf",
+      filename: "document.pdf",
+      parentScope: {
+        agentId: "agent-1",
+        conversationId: "conv-1",
+      },
+    });
+
+    expect(result).toContain("Attachment sent to whatsapp");
+    expect(sendMessage).toHaveBeenCalled();
+  });
+
+  test("proactive upload-file denied when attachmentMimeTypes=[]", async () => {
+    __testOverrideLoadChannelAccounts(() => []);
+    __testOverrideSaveChannelAccounts(() => {});
+    const registry = new ChannelRegistry();
+
+    const { adapter, sendMessage } = makeWhatsAppAdapter("signo-digi");
+    registry.registerAdapter(adapter);
+
+    upsertChannelAccount(
+      "whatsapp",
+      makeWhatsAppAccount("signo-digi", {
+        dmPolicy: "open",
+        allowedUsers: ["*"],
+        sendAttachments: true,
+        attachmentMimeTypes: [],
+        attachmentAllowedRecipients: ["*"],
+      }),
+    );
+
+    const result = await message_channel({
+      action: "upload-file",
+      channel: "whatsapp",
+      chat_id: "584149145006@s.whatsapp.net",
+      media: "/tmp/document.pdf",
+      filename: "document.pdf",
+      parentScope: {
+        agentId: "agent-1",
+        conversationId: "conv-1",
+      },
+    });
+
+    expect(result).toContain("no MIME types are allowed");
+    expect(sendMessage).not.toHaveBeenCalled();
+  });
+
+  test("proactive upload-file denied when MIME not in attachmentMimeTypes", async () => {
+    __testOverrideLoadChannelAccounts(() => []);
+    __testOverrideSaveChannelAccounts(() => {});
+    const registry = new ChannelRegistry();
+
+    const { adapter, sendMessage } = makeWhatsAppAdapter("signo-digi");
+    registry.registerAdapter(adapter);
+
+    upsertChannelAccount(
+      "whatsapp",
+      makeWhatsAppAccount("signo-digi", {
+        dmPolicy: "open",
+        allowedUsers: ["*"],
+        sendAttachments: true,
+        attachmentMimeTypes: ["image/png", "image/jpeg"],
+        attachmentAllowedRecipients: ["*"],
+      }),
+    );
+
+    const result = await message_channel({
+      action: "upload-file",
+      channel: "whatsapp",
+      chat_id: "584149145006@s.whatsapp.net",
+      media: "/tmp/document.pdf",
+      filename: "document.pdf",
+      parentScope: {
+        agentId: "agent-1",
+        conversationId: "conv-1",
+      },
+    });
+
+    expect(result).toContain('MIME type "application/pdf" is not allowed');
+    expect(sendMessage).not.toHaveBeenCalled();
+  });
+
+  test("proactive upload-file allowed when MIME matches attachmentMimeTypes", async () => {
+    __testOverrideLoadChannelAccounts(() => []);
+    __testOverrideSaveChannelAccounts(() => {});
+    const registry = new ChannelRegistry();
+
+    const { adapter, sendMessage } = makeWhatsAppAdapter("signo-digi");
+    registry.registerAdapter(adapter);
+
+    upsertChannelAccount(
+      "whatsapp",
+      makeWhatsAppAccount("signo-digi", {
+        dmPolicy: "open",
+        allowedUsers: ["*"],
+        sendAttachments: true,
+        attachmentMimeTypes: ["application/pdf", "image/png"],
+        attachmentAllowedRecipients: ["*"],
+      }),
+    );
+
+    const result = await message_channel({
+      action: "upload-file",
+      channel: "whatsapp",
+      chat_id: "584149145006@s.whatsapp.net",
+      media: "/tmp/document.pdf",
+      filename: "document.pdf",
+      parentScope: {
+        agentId: "agent-1",
+        conversationId: "conv-1",
+      },
+    });
+
+    expect(result).toContain("Attachment sent to whatsapp");
+    expect(sendMessage).toHaveBeenCalled();
+  });
+
+  test("text proactive send unaffected by attachment policy", async () => {
+    __testOverrideLoadChannelAccounts(() => []);
+    __testOverrideSaveChannelAccounts(() => {});
+    const registry = new ChannelRegistry();
+
+    const { adapter, sendMessage } = makeWhatsAppAdapter("signo-digi");
+    registry.registerAdapter(adapter);
+
+    // sendAttachments is false, but this is a text send, not upload-file
+    upsertChannelAccount(
+      "whatsapp",
+      makeWhatsAppAccount("signo-digi", {
+        dmPolicy: "open",
+        allowedUsers: ["*"],
+      }),
+    );
+
+    const result = await message_channel({
+      action: "send",
+      channel: "whatsapp",
+      chat_id: "584149145006@s.whatsapp.net",
+      message: "just text",
+      parentScope: {
+        agentId: "agent-1",
+        conversationId: "conv-1",
+      },
+    });
+
+    expect(result).toContain("Message sent to whatsapp");
+    expect(sendMessage).toHaveBeenCalled();
+  });
+
+  test("routed WhatsApp upload-file works when policy allows", async () => {
+    __testOverrideLoadChannelAccounts(() => []);
+    __testOverrideSaveChannelAccounts(() => {});
+    const registry = new ChannelRegistry();
+
+    const { adapter, sendMessage } = makeWhatsAppAdapter("signo-digi");
+    registry.registerAdapter(adapter);
+
+    upsertChannelAccount(
+      "whatsapp",
+      makeWhatsAppAccount("signo-digi", {
+        dmPolicy: "open",
+        allowedUsers: ["*"],
+        sendAttachments: true,
+        attachmentMimeTypes: ["*"],
+        attachmentAllowedRecipients: ["*"],
+      }),
+    );
+
+    setRouteInMemory("whatsapp", {
+      accountId: "signo-digi",
+      chatId: "584149145006@s.whatsapp.net",
+      agentId: "agent-1",
+      conversationId: "conv-1",
+      enabled: true,
+      createdAt: "2026-04-11T00:00:00.000Z",
+    });
+
+    const result = await message_channel({
+      action: "upload-file",
+      channel: "whatsapp",
+      chat_id: "584149145006@s.whatsapp.net",
+      media: "/tmp/photo.png",
+      filename: "photo.png",
+      parentScope: {
+        agentId: "agent-1",
+        conversationId: "conv-1",
+      },
+    });
+
+    expect(result).toContain("Attachment sent to whatsapp");
+    expect(sendMessage).toHaveBeenCalledWith(
+      expect.objectContaining({
+        channel: "whatsapp",
+        accountId: "signo-digi",
+        chatId: "584149145006@s.whatsapp.net",
+        mediaPath: "/tmp/photo.png",
+      }),
+    );
+  });
+
+  test("routed WhatsApp upload-file denied when policy blocks", async () => {
+    __testOverrideLoadChannelAccounts(() => []);
+    __testOverrideSaveChannelAccounts(() => {});
+    const registry = new ChannelRegistry();
+
+    const { adapter, sendMessage } = makeWhatsAppAdapter("signo-digi");
+    registry.registerAdapter(adapter);
+
+    upsertChannelAccount(
+      "whatsapp",
+      makeWhatsAppAccount("signo-digi", {
+        dmPolicy: "open",
+        allowedUsers: ["*"],
+        // sendAttachments false (default) — blocks upload-file
+      }),
+    );
+
+    setRouteInMemory("whatsapp", {
+      accountId: "signo-digi",
+      chatId: "584149145006@s.whatsapp.net",
+      agentId: "agent-1",
+      conversationId: "conv-1",
+      enabled: true,
+      createdAt: "2026-04-11T00:00:00.000Z",
+    });
+
+    const result = await message_channel({
+      action: "upload-file",
+      channel: "whatsapp",
+      chat_id: "584149145006@s.whatsapp.net",
+      media: "/tmp/document.pdf",
+      filename: "document.pdf",
+      parentScope: {
+        agentId: "agent-1",
+        conversationId: "conv-1",
+      },
+    });
+
+    expect(result).toContain("attachments disabled");
+    expect(sendMessage).not.toHaveBeenCalled();
+  });
+
+  test("routed WhatsApp upload-file denied when account config is missing", async () => {
+    __testOverrideLoadChannelAccounts(() => []);
+    __testOverrideSaveChannelAccounts(() => {});
+    const registry = new ChannelRegistry();
+
+    const { adapter, sendMessage } = makeWhatsAppAdapter("signo-digi");
+    registry.registerAdapter(adapter);
+
+    // No account config registered — getChannelAccount returns null.
+    // Routed upload-file must fail closed, not bypass attachment policy.
+
+    setRouteInMemory("whatsapp", {
+      accountId: "signo-digi",
+      chatId: "584149145006@s.whatsapp.net",
+      agentId: "agent-1",
+      conversationId: "conv-1",
+      enabled: true,
+      createdAt: "2026-04-11T00:00:00.000Z",
+    });
+
+    const result = await message_channel({
+      action: "upload-file",
+      channel: "whatsapp",
+      chat_id: "584149145006@s.whatsapp.net",
+      media: "/tmp/document.pdf",
+      filename: "document.pdf",
+      parentScope: {
+        agentId: "agent-1",
+        conversationId: "conv-1",
+      },
+    });
+
+    expect(result).toContain("not configured");
+    expect(result).toContain("attachment policy");
+    expect(sendMessage).not.toHaveBeenCalled();
+  });
+
+  test("proactive upload-file MIME inference uses filename when media path has no extension", async () => {
+    __testOverrideLoadChannelAccounts(() => []);
+    __testOverrideSaveChannelAccounts(() => {});
+    const registry = new ChannelRegistry();
+
+    const { adapter, sendMessage } = makeWhatsAppAdapter("signo-digi");
+    registry.registerAdapter(adapter);
+
+    upsertChannelAccount(
+      "whatsapp",
+      makeWhatsAppAccount("signo-digi", {
+        dmPolicy: "open",
+        allowedUsers: ["*"],
+        sendAttachments: true,
+        attachmentMimeTypes: ["application/pdf"],
+        attachmentAllowedRecipients: ["*"],
+      }),
+    );
+
+    // media path is a temp file with no extension; filename has the extension
+    const result = await message_channel({
+      action: "upload-file",
+      channel: "whatsapp",
+      chat_id: "584149145006@s.whatsapp.net",
+      media: "/tmp/abc123xyz",
+      filename: "report.pdf",
+      parentScope: {
+        agentId: "agent-1",
+        conversationId: "conv-1",
+      },
+    });
+
+    expect(result).toContain("Attachment sent to whatsapp");
+    expect(sendMessage).toHaveBeenCalled();
+  });
+
+  test("routed upload-file MIME inference uses filename when media path has no extension", async () => {
+    __testOverrideLoadChannelAccounts(() => []);
+    __testOverrideSaveChannelAccounts(() => {});
+    const registry = new ChannelRegistry();
+
+    const { adapter, sendMessage } = makeWhatsAppAdapter("signo-digi");
+    registry.registerAdapter(adapter);
+
+    upsertChannelAccount(
+      "whatsapp",
+      makeWhatsAppAccount("signo-digi", {
+        dmPolicy: "open",
+        allowedUsers: ["*"],
+        sendAttachments: true,
+        attachmentMimeTypes: ["image/png"],
+        attachmentAllowedRecipients: ["*"],
+      }),
+    );
+
+    setRouteInMemory("whatsapp", {
+      accountId: "signo-digi",
+      chatId: "584149145006@s.whatsapp.net",
+      agentId: "agent-1",
+      conversationId: "conv-1",
+      enabled: true,
+      createdAt: "2026-04-11T00:00:00.000Z",
+    });
+
+    // media path is a temp file with no extension; filename has the extension
+    const result = await message_channel({
+      action: "upload-file",
+      channel: "whatsapp",
+      chat_id: "584149145006@s.whatsapp.net",
+      media: "/tmp/xyz789tmp",
+      filename: "snapshot.png",
+      parentScope: {
+        agentId: "agent-1",
+        conversationId: "conv-1",
+      },
+    });
+
+    expect(result).toContain("Attachment sent to whatsapp");
+    expect(sendMessage).toHaveBeenCalled();
   });
 });

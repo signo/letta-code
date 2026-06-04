@@ -48,6 +48,9 @@ const SNAKE_TO_CAMEL: Record<string, string> = {
   remove_stale_routes: "removeStaleRoutes",
   thread_policy_by_channel: "threadPolicyByChannel",
   transcribe_voice: "transcribeVoice",
+  send_attachments: "sendAttachments",
+  attachment_mime_types: "attachmentMimeTypes",
+  attachment_allowed_recipients: "attachmentAllowedRecipients",
 };
 
 let warnedAboutDualKeys = false;
@@ -314,6 +317,9 @@ function normalizeLoadedAccount<T extends ChannelAccount>(account: T): T {
     next.mentionPatterns = [...(next.mentionPatterns ?? [])];
     next.downloadMedia = next.downloadMedia === true;
     next.transcribeVoice = next.transcribeVoice === true;
+    next.sendAttachments = next.sendAttachments === true;
+    next.attachmentMimeTypes = next.attachmentMimeTypes ?? [];
+    next.attachmentAllowedRecipients = next.attachmentAllowedRecipients ?? [];
   }
   return next;
 }
@@ -385,6 +391,9 @@ function makeDefaultLegacyAccount(
       transcribeVoice: config.transcribeVoice === true,
       downloadMedia: config.downloadMedia === true,
       mediaMaxBytes: config.mediaMaxBytes,
+      sendAttachments: false,
+      attachmentMimeTypes: [],
+      attachmentAllowedRecipients: [],
       createdAt: now,
       updatedAt: now,
     };

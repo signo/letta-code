@@ -495,6 +495,12 @@ export interface WhatsAppChannelConfig {
   allowedTools?: string[];
   /** Tool name blocklist — subtracts from effective allowed set. Default: undefined (= []). */
   blockedTools?: string[];
+  /** When true, the agent may send file attachments via WhatsApp. Default: false. */
+  sendAttachments?: boolean;
+  /** MIME type allowlist for outbound attachments. ["*"] = all types allowed. [] = none allowed. Default: []. */
+  attachmentMimeTypes?: string[];
+  /** JID allowlist for attachment recipients. ["*"] = no restriction. [] = no recipients allowed. Default: []. */
+  attachmentAllowedRecipients?: string[];
 }
 
 export type ChannelConfig =
@@ -635,6 +641,12 @@ export interface WhatsAppChannelAccount extends ChannelAccountBase {
   routedTurnAutoProgressAfterMs?: number;
   /** Auto-progress message text. Default: "Processing your request. I'll update you shortly." */
   routedTurnAutoProgressMessage?: string;
+  /** When true, the agent may send file attachments via WhatsApp. Default: false. */
+  sendAttachments?: boolean;
+  /** MIME type allowlist for outbound attachments. ["*"] = all types allowed. [] = none allowed. Default: []. */
+  attachmentMimeTypes?: string[];
+  /** JID allowlist for attachment recipients. ["*"] = no restriction. [] = no recipients allowed. Default: []. */
+  attachmentAllowedRecipients?: string[];
 }
 
 export type ChannelAccount =

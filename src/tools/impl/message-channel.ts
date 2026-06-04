@@ -810,6 +810,95 @@ function checkWhatsAppProactiveDmPolicy(
 }
 
 /**
+ * MIME type map for common file extensions.
+ * Used to infer MIME type from filename/path for attachment policy checks.
+ */
+const MIME_BY_EXTENSION: Record<string, string> = {
+  ".pdf": "application/pdf",
+  ".docx":
+    "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+  ".ogg": "audio/ogg",
+  ".mp3": "audio/mpeg",
+  ".m4a": "audio/mp4",
+  ".png": "image/png",
+  ".jpg": "image/jpeg",
+  ".jpeg": "image/jpeg",
+  ".txt": "text/plain",
+};
+
+/**
+ * Infer MIME type from a file path or filename.
+ * Returns lowercase MIME type string, or null if unknown.
+ */
+function inferMimeType(filePath: string): string | null {
+  const lower = filePath.toLowerCase();
+  for (const ext of Object.keys(MIME_BY_EXTENSION)) {
+    if (lower.endsWith(ext)) {
+      return MIME_BY_EXTENSION[ext]!;
+    }
+  }
+  return null;
+}
+
+/**
+ * Check WhatsApp attachment policy for a given recipient and file.
+ * Returns error string if denied, null if allowed.
+ *
+ * Enforces:
+ *   1. sendAttachments gate (default false)
+ *   2. attachmentMimeTypes allowlist (undefined/[] = deny all, ["*"] = allow all)
+ *   3. attachmentAllowedRecipients allowlist (undefined/[] = deny all, ["*"] = allow all)
+ */
+function checkWhatsAppAttachmentPolicy(
+  account: {
+    sendAttachments?: boolean;
+    attachmentMimeTypes?: string[];
+    attachmentAllowedRecipients?: string[];
+  },
+  recipientJid: string,
+  mediaPath?: string,
+): string | null {
+  // sendAttachments defaults to false (disabled) if not set.
+  if (account.sendAttachments !== true) {
+    return "Error: WhatsApp account has attachments disabled.";
+  }
+
+  // MIME type allowlist check.
+  const mimeTypes = account.attachmentMimeTypes ?? [];
+  if (mimeTypes.length === 0) {
+    return "Error: Attachment policy: no MIME types are allowed.";
+  }
+  if (!mimeTypes.includes("*")) {
+    // Explicit allowlist: infer MIME from path and check.
+    if (!mediaPath) {
+      return "Error: Attachment policy: cannot determine file type (no media path).";
+    }
+    const inferred = inferMimeType(mediaPath);
+    if (!inferred) {
+      return `Error: Attachment policy: cannot determine MIME type for "${mediaPath}".`;
+    }
+    if (!mimeTypes.includes(inferred)) {
+      return `Error: Attachment policy: MIME type "${inferred}" is not allowed.`;
+    }
+  }
+
+  // Recipient allowlist check.
+  const allowedRecipients = account.attachmentAllowedRecipients ?? [];
+  if (allowedRecipients.length === 0) {
+    return "Error: Attachment policy: no recipients are allowed.";
+  }
+  if (allowedRecipients.includes("*")) return null;
+
+  // Explicit allowlist: check if recipient is included.
+  // Uses phone-normalized matching via allowedUsersIncludes for JID/phone parity.
+  if (!allowedUsersIncludes(allowedRecipients, recipientJid)) {
+    return `Error: Attachment policy: recipient "${recipientJid}" is not in the allowed recipients list.`;
+  }
+
+  return null;
+}
+
+/**
  * Resolve a WhatsApp adapter for proactive outbound (no route).
  * If accountId is provided, validate it. Otherwise require exactly one
  * WhatsApp adapter.
@@ -909,6 +998,20 @@ export async function message_channel(
           );
           if (policyError) return policyError;
 
+          // Attachment policy check for upload-file action.
+          if (input.action === "upload-file") {
+            const attachmentError = checkWhatsAppAttachmentPolicy(
+              account as {
+                sendAttachments?: boolean;
+                attachmentMimeTypes?: string[];
+                attachmentAllowedRecipients?: string[];
+              },
+              input.chatId!,
+              input.filename ?? input.mediaPath,
+            );
+            if (attachmentError) return attachmentError;
+          }
+
           const plugin = await loadChannelPlugin("whatsapp");
           const fallbackRoute = buildSyntheticChannelRoute({
             scope,
@@ -940,6 +1043,24 @@ export async function message_channel(
 
         if (!adapter.isRunning()) {
           return `Error: Channel "${input.channel}" is not currently running.`;
+        }
+
+        // Attachment policy check for routed WhatsApp upload-file.
+        if (input.channel === "whatsapp" && input.action === "upload-file") {
+          const account = getChannelAccount("whatsapp", route.accountId!);
+          if (!account || account.channel !== "whatsapp") {
+            return `Error: WhatsApp account "${route.accountId}" is not configured; cannot verify attachment policy.`;
+          }
+          const attachmentError = checkWhatsAppAttachmentPolicy(
+            account as {
+              sendAttachments?: boolean;
+              attachmentMimeTypes?: string[];
+              attachmentAllowedRecipients?: string[];
+            },
+            route.chatId,
+            input.filename ?? input.mediaPath,
+          );
+          if (attachmentError) return attachmentError;
         }
 
         const plugin = await loadChannelPlugin(input.channel);
