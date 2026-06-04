@@ -738,6 +738,8 @@ export function createWhatsAppAdapter(
 
     async sendDirectReply(chatId, text, options) {
       if (!running || !text.trim()) return;
+      const prefix = account.messagePrefix;
+      const prefixedText = prefix ? `${prefix} ${text}` : text;
       const targetJid = resolveSendJid({
         chatId,
         selfPhoneJid,
@@ -753,7 +755,7 @@ export function createWhatsAppAdapter(
       try {
         const result = await sendToWhatsApp(
           targetJid,
-          { text },
+          { text: prefixedText },
           buildQuotedOptions(targetJid, options?.replyToMessageId),
         );
         const messageId = result.key?.id ?? "";

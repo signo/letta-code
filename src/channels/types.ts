@@ -506,6 +506,12 @@ export interface WhatsAppChannelConfig {
   waitingBehavior?: WhatsAppWaitingBehavior;
   /** Custom message text for waitingBehavior="message". Default: "Let me do some work. I'll be back..." */
   waitingMessage?: string;
+  /** When true (default), unauthorized inbound DMs are silently ignored. When false, the notAllowedMessage is sent. */
+  notAllowedIgnore?: boolean;
+  /** Message sent to unauthorized senders when notAllowedIgnore=false. Default: "🚫" */
+  notAllowedMessage?: string;
+  /** Prefix prepended to outbound agent replies. Used for multi-agent visual identity (e.g. "🐙" for Ringo). */
+  messagePrefix?: string;
 }
 
 export type ChannelConfig =
@@ -656,6 +662,12 @@ export interface WhatsAppChannelAccount extends ChannelAccountBase {
   waitingBehavior?: WhatsAppWaitingBehavior;
   /** Custom message text for waitingBehavior="message". Default: "Let me do some work. I'll be back..." */
   waitingMessage?: string;
+  /** When true (default), unauthorized inbound DMs are silently ignored. When false, the notAllowedMessage is sent. */
+  notAllowedIgnore?: boolean;
+  /** Message sent to unauthorized senders when notAllowedIgnore=false. Default: "🚫" */
+  notAllowedMessage?: string;
+  /** Prefix prepended to outbound agent replies. Used for multi-agent visual identity (e.g. "🐙" for Ringo). */
+  messagePrefix?: string;
 }
 
 export type ChannelAccount =

@@ -19,6 +19,8 @@ function makeAccount(
   } as WhatsAppChannelAccount;
 }
 
+// ── waiting_behavior / waiting_message (PR 4) ────────────────────
+
 describe("whatsappAccountConfigAdapter.isValidConfig", () => {
   test("accepts waiting_behavior with valid values", () => {
     expect(
@@ -79,6 +81,63 @@ describe("whatsappAccountConfigAdapter.isValidConfig", () => {
       }),
     ).toBe(false);
   });
+
+  // ── not_allowed fields (PR 5) ────────────────────────────────
+
+  test("accepts not_allowed_ignore as boolean", () => {
+    expect(
+      whatsappAccountConfigAdapter.isValidConfig({
+        not_allowed_ignore: true,
+      }),
+    ).toBe(true);
+    expect(
+      whatsappAccountConfigAdapter.isValidConfig({
+        not_allowed_ignore: false,
+      }),
+    ).toBe(true);
+  });
+
+  test("accepts not_allowed_message as string", () => {
+    expect(
+      whatsappAccountConfigAdapter.isValidConfig({
+        not_allowed_message: "Access denied",
+      }),
+    ).toBe(true);
+  });
+
+  test("rejects non-boolean not_allowed_ignore", () => {
+    expect(
+      whatsappAccountConfigAdapter.isValidConfig({
+        not_allowed_ignore: "yes",
+      }),
+    ).toBe(false);
+  });
+
+  test("rejects non-string not_allowed_message", () => {
+    expect(
+      whatsappAccountConfigAdapter.isValidConfig({
+        not_allowed_message: 403,
+      }),
+    ).toBe(false);
+  });
+
+  // ── message_prefix (PR 5) ────────────────────────────────────
+
+  test("accepts message_prefix as string", () => {
+    expect(
+      whatsappAccountConfigAdapter.isValidConfig({
+        message_prefix: "\u{1F419}",
+      }),
+    ).toBe(true);
+  });
+
+  test("rejects non-string message_prefix", () => {
+    expect(
+      whatsappAccountConfigAdapter.isValidConfig({
+        message_prefix: 42,
+      }),
+    ).toBe(false);
+  });
 });
 
 describe("whatsappAccountConfigAdapter.toAccountPatch", () => {
@@ -124,6 +183,63 @@ describe("whatsappAccountConfigAdapter.toAccountPatch", () => {
     expect(patch.waitingBehavior).toBeUndefined();
     expect(patch.waitingMessage).toBeUndefined();
   });
+
+  // ── not_allowed fields (PR 5) ────────────────────────────────
+
+  test("normalizes not_allowed_ignore to notAllowedIgnore", () => {
+    const patch = whatsappAccountConfigAdapter.toAccountPatch({
+      not_allowed_ignore: false,
+    });
+    expect(patch.notAllowedIgnore).toBe(false);
+  });
+
+  test("normalizes not_allowed_message to notAllowedMessage", () => {
+    const patch = whatsappAccountConfigAdapter.toAccountPatch({
+      not_allowed_message: "Nope",
+    });
+    expect(patch.notAllowedMessage).toBe("Nope");
+  });
+
+  test("returns undefined for invalid not_allowed_ignore", () => {
+    const patch = whatsappAccountConfigAdapter.toAccountPatch({
+      not_allowed_ignore: "yes",
+    });
+    expect(patch.notAllowedIgnore).toBeUndefined();
+  });
+
+  test("returns undefined for non-string not_allowed_message", () => {
+    const patch = whatsappAccountConfigAdapter.toAccountPatch({
+      not_allowed_message: 42,
+    });
+    expect(patch.notAllowedMessage).toBeUndefined();
+  });
+
+  // ── message_prefix (PR 5) ────────────────────────────────────
+
+  test("normalizes message_prefix to messagePrefix", () => {
+    const patch = whatsappAccountConfigAdapter.toAccountPatch({
+      message_prefix: "\u{1F419}",
+    });
+    expect(patch.messagePrefix).toBe("\u{1F419}");
+  });
+
+  test("returns undefined for non-string message_prefix", () => {
+    const patch = whatsappAccountConfigAdapter.toAccountPatch({
+      message_prefix: 42,
+    });
+    expect(patch.messagePrefix).toBeUndefined();
+  });
+
+  test("normalizes all PR 5 fields together", () => {
+    const patch = whatsappAccountConfigAdapter.toAccountPatch({
+      not_allowed_ignore: false,
+      not_allowed_message: "Denied",
+      message_prefix: "\u{1FAC0}",
+    });
+    expect(patch.notAllowedIgnore).toBe(false);
+    expect(patch.notAllowedMessage).toBe("Denied");
+    expect(patch.messagePrefix).toBe("\u{1FAC0}");
+  });
 });
 
 describe("whatsappAccountConfigAdapter.toAccountConfig", () => {
@@ -143,6 +259,32 @@ describe("whatsappAccountConfigAdapter.toAccountConfig", () => {
     expect(config.waiting_behavior).toBeUndefined();
     expect(config.waiting_message).toBeUndefined();
   });
+
+  test("serializes not_allowed fields to snake_case", () => {
+    const account = makeAccount({
+      notAllowedIgnore: false,
+      notAllowedMessage: "Access denied",
+    });
+    const config = whatsappAccountConfigAdapter.toAccountConfig(account);
+    expect(config.not_allowed_ignore).toBe(false);
+    expect(config.not_allowed_message).toBe("Access denied");
+  });
+
+  test("serializes message_prefix to snake_case", () => {
+    const account = makeAccount({
+      messagePrefix: "\u{1F419}",
+    });
+    const config = whatsappAccountConfigAdapter.toAccountConfig(account);
+    expect(config.message_prefix).toBe("\u{1F419}");
+  });
+
+  test("serializes undefined PR 5 fields", () => {
+    const account = makeAccount();
+    const config = whatsappAccountConfigAdapter.toAccountConfig(account);
+    expect(config.not_allowed_ignore).toBeUndefined();
+    expect(config.not_allowed_message).toBeUndefined();
+    expect(config.message_prefix).toBeUndefined();
+  });
 });
 
 describe("whatsappAccountConfigAdapter.toConfigSnapshotConfig", () => {
@@ -156,6 +298,21 @@ describe("whatsappAccountConfigAdapter.toConfigSnapshotConfig", () => {
     ).toMatchObject({
       waiting_behavior: "typing_indicator",
       waiting_message: "Please wait...",
+    });
+  });
+
+  test("matches toAccountConfig for PR 5 fields", () => {
+    const account = makeAccount({
+      notAllowedIgnore: false,
+      notAllowedMessage: "Denied",
+      messagePrefix: "\u{1FAE0}",
+    });
+    expect(
+      whatsappAccountConfigAdapter.toConfigSnapshotConfig(account),
+    ).toMatchObject({
+      not_allowed_ignore: false,
+      not_allowed_message: "Denied",
+      message_prefix: "\u{1FAE0}",
     });
   });
 });

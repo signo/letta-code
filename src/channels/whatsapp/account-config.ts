@@ -17,6 +17,9 @@ const WHATSAPP_CONFIG_KEYS = new Set([
   "media_max_bytes",
   "waiting_behavior",
   "waiting_message",
+  "not_allowed_ignore",
+  "not_allowed_message",
+  "message_prefix",
 ]);
 
 function isNullableString(value: unknown): value is string | null {
@@ -71,7 +74,13 @@ export const whatsappAccountConfigAdapter: ChannelAccountConfigAdapter<WhatsAppC
         (config.waiting_behavior === undefined ||
           isWaitingBehavior(config.waiting_behavior)) &&
         (config.waiting_message === undefined ||
-          typeof config.waiting_message === "string")
+          typeof config.waiting_message === "string") &&
+        (config.not_allowed_ignore === undefined ||
+          isBoolean(config.not_allowed_ignore)) &&
+        (config.not_allowed_message === undefined ||
+          typeof config.not_allowed_message === "string") &&
+        (config.message_prefix === undefined ||
+          typeof config.message_prefix === "string")
       );
     },
 
@@ -108,6 +117,17 @@ export const whatsappAccountConfigAdapter: ChannelAccountConfigAdapter<WhatsAppC
           typeof config.waiting_message === "string"
             ? config.waiting_message
             : undefined,
+        notAllowedIgnore: isBoolean(config.not_allowed_ignore)
+          ? config.not_allowed_ignore
+          : undefined,
+        notAllowedMessage:
+          typeof config.not_allowed_message === "string"
+            ? config.not_allowed_message
+            : undefined,
+        messagePrefix:
+          typeof config.message_prefix === "string"
+            ? config.message_prefix
+            : undefined,
       };
     },
 
@@ -123,6 +143,9 @@ export const whatsappAccountConfigAdapter: ChannelAccountConfigAdapter<WhatsAppC
         media_max_bytes: account.mediaMaxBytes,
         waiting_behavior: account.waitingBehavior,
         waiting_message: account.waitingMessage,
+        not_allowed_ignore: account.notAllowedIgnore,
+        not_allowed_message: account.notAllowedMessage,
+        message_prefix: account.messagePrefix,
         ...toWhatsAppConnectionConfig(account.accountId),
       };
     },
@@ -139,6 +162,9 @@ export const whatsappAccountConfigAdapter: ChannelAccountConfigAdapter<WhatsAppC
         media_max_bytes: account.mediaMaxBytes,
         waiting_behavior: account.waitingBehavior,
         waiting_message: account.waitingMessage,
+        not_allowed_ignore: account.notAllowedIgnore,
+        not_allowed_message: account.notAllowedMessage,
+        message_prefix: account.messagePrefix,
         ...toWhatsAppConnectionConfig(account.accountId),
       };
     },

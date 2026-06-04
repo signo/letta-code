@@ -168,6 +168,9 @@ export interface ChannelPluginAccountPatch {
   mediaMaxBytes?: number;
   waitingBehavior?: WhatsAppWaitingBehavior;
   waitingMessage?: string;
+  notAllowedIgnore?: boolean;
+  notAllowedMessage?: string;
+  messagePrefix?: string;
 }
 
 export type ChannelAccountPatch = ChannelCommonAccountPatch &

@@ -105,6 +105,19 @@ function channelDisplayName(channelId: string): string {
   }
 }
 
+/**
+ * Determine not_allowed reply for an unauthorized WhatsApp DM.
+ * Returns null when the message should be silently ignored (default).
+ * Returns the reply string when notAllowedIgnore=false.
+ */
+export function getWhatsAppNotAllowedReply(
+  config: WhatsAppChannelAccount,
+): string | null {
+  const ignore = config.notAllowedIgnore !== false; // default true
+  if (ignore) return null;
+  return config.notAllowedMessage ?? "\u{1F6AB}"; // default 🚫
+}
+
 export function buildPairingInstructions(
   channelId: string,
   code: string,
@@ -1977,10 +1990,10 @@ export class ChannelRegistry {
       config.dmPolicy === "allowlist" &&
       !allowedUsersIncludes(config.allowedUsers, msg.senderId)
     ) {
-      await adapter.sendDirectReply(
-        msg.chatId,
-        "You are not on the allowed users list for this WhatsApp account.",
-      );
+      const reply = getWhatsAppNotAllowedReply(config);
+      if (reply !== null) {
+        await adapter.sendDirectReply(msg.chatId, reply);
+      }
       return null;
     }
 
