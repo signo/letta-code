@@ -357,7 +357,7 @@ export async function handleIncomingMessage(
 
   // Declared here so the catch block (outside the try) can also reference them.
   let routedChannelTurn = false; // assigned properly below after msg is available
-  const channelLiveness: ChannelTurnLiveness | null = null;
+  let channelLiveness: ChannelTurnLiveness | null = null;
   let turnBudget: RoutedTurnBudget | null = null; // Budget active only for WhatsApp routed turns
 
   runtime.isProcessing = true;
@@ -435,7 +435,6 @@ export async function handleIncomingMessage(
     );
     trackListenerUserInput(normalizedMessages, "unknown");
     routedChannelTurn = (msg.channelTurnSources?.length ?? 0) > 0;
-    let channelLiveness: ChannelTurnLiveness | null = null;
 
     if (routedChannelTurn) {
       const sources = msg.channelTurnSources!;
@@ -1500,9 +1499,8 @@ export async function handleIncomingMessage(
   } catch (error) {
     // Mark routed channel turns as failed if the turn loop throws before
     // reaching an explicit resolution path.
-    const liveness: ChannelTurnLiveness = channelLiveness!;
     if (routedChannelTurn) {
-      liveness.signalEnd("runtime_error");
+      channelLiveness?.signalEnd("runtime_error");
     }
     trackBoundaryError({
       errorType: "listener_turn_processing_failed",

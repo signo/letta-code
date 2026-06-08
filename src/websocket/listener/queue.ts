@@ -1,5 +1,6 @@
 import type { MessageCreate } from "@letta-ai/letta-client/resources/agents/agents";
 import { getChannelRegistry } from "@/channels/registry";
+import { HARD_TIMEOUT_MS } from "@/channels/turnLiveness";
 import type { ChannelTurnOutcome, ChannelTurnSource } from "@/channels/types";
 import type {
   DequeuedBatch,
@@ -15,8 +16,13 @@ import {
   normalizeMessageContentImages as normalizeSharedMessageContentImages,
 } from "@/utils/message-image-normalization";
 import { getListenerBlockedReason } from "@/websocket/helpers/listener-queue-adapter";
-import { emitDequeuedUserMessage } from "./protocol-outbound";
 import {
+  emitDequeuedUserMessage,
+  emitRuntimeStateUpdates,
+  setLoopStatus,
+} from "./protocol-outbound";
+import {
+  clearActiveRunState,
   emitListenerStatus,
   evictConversationRuntimeIfIdle,
   getActiveRuntime,
@@ -474,6 +480,71 @@ function computeListenerQueueBlockedReason(
   });
 }
 
+const ROUTED_TURN_QUEUE_WATCHDOG_GRACE_MS = 5_000;
+
+export async function processQueuedTurnWithWatchdog(
+  runtime: ConversationRuntime,
+  queuedTurn: IncomingMessage,
+  dequeuedBatch: DequeuedBatch,
+  processQueuedTurn: (
+    queuedTurn: IncomingMessage,
+    dequeuedBatch: DequeuedBatch,
+  ) => Promise<void>,
+): Promise<void> {
+  const channelTurnSources = queuedTurn.channelTurnSources ?? [];
+  if (channelTurnSources.length === 0) {
+    await processQueuedTurn(queuedTurn, dequeuedBatch);
+    return;
+  }
+
+  let timedOut = false;
+  let timeout: ReturnType<typeof setTimeout> | null = null;
+
+  const work = processQueuedTurn(queuedTurn, dequeuedBatch).catch((error) => {
+    if (timedOut) {
+      console.warn(
+        "[Channels] routed turn settled after queue watchdog timeout:",
+        error instanceof Error ? error.message : String(error),
+      );
+      return;
+    }
+    throw error;
+  });
+
+  const watchdog = new Promise<never>((_, reject) => {
+    timeout = setTimeout(() => {
+      timedOut = true;
+      if (
+        runtime.activeAbortController &&
+        !runtime.activeAbortController.signal.aborted
+      ) {
+        runtime.activeAbortController.abort();
+      }
+      runtime.lastStopReason = "error";
+      runtime.lastTerminalLoopErrorMessage = "provider_timeout";
+      runtime.isProcessing = false;
+      clearActiveRunState(runtime);
+      setLoopStatus(runtime, "WAITING_ON_INPUT", {
+        agent_id: runtime.agentId,
+        conversation_id: runtime.conversationId,
+      });
+      emitRuntimeStateUpdates(runtime, {
+        agent_id: runtime.agentId,
+        conversation_id: runtime.conversationId,
+      });
+      reject(new Error("provider_timeout"));
+    }, HARD_TIMEOUT_MS + ROUTED_TURN_QUEUE_WATCHDOG_GRACE_MS);
+  });
+
+  try {
+    await Promise.race([work, watchdog]);
+  } finally {
+    if (timeout) {
+      clearTimeout(timeout);
+    }
+  }
+}
+
 async function drainQueuedMessages(
   runtime: ConversationRuntime,
   socket: ListenerTransport,
@@ -537,7 +608,12 @@ async function drainQueuedMessages(
       let pendingError: unknown;
       runtime.activeChannelTurnSources = channelTurnSources;
       try {
-        await processQueuedTurn(queuedTurn, dequeuedBatch);
+        await processQueuedTurnWithWatchdog(
+          runtime,
+          queuedTurn,
+          dequeuedBatch,
+          processQueuedTurn,
+        );
       } catch (error) {
         didThrow = true;
         turnError = error instanceof Error ? error.message : String(error);
