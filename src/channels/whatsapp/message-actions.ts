@@ -76,7 +76,7 @@ export const whatsappMessageActions: ChannelMessageActionAdapter = {
           media: {
             type: "string",
             description:
-              "Absolute local file path to upload. For WhatsApp voice memos/audio uploads, provide Ogg/Opus only (.ogg, .oga, or .opus); MP3/M4A/WAV files are rejected because they do not render as WhatsApp push-to-talk voice notes.",
+              "Absolute local file path to upload. Audio files (.ogg, .oga, .opus) are sent as voice memos (push-to-talk). All other audio formats are sent as documents.",
           },
         },
       },

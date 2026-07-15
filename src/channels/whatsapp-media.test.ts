@@ -46,6 +46,7 @@ describe("WhatsApp media helpers", () => {
         mediaPath: "/tmp/photo.png",
       }),
     ).toEqual({ image: { url: "/tmp/photo.png" }, caption: "caption" });
+    // .ogg always goes as voice memo unconditionally.
     expect(
       buildWhatsAppOutboundPayload({
         text: "",
@@ -58,13 +59,30 @@ describe("WhatsApp media helpers", () => {
     });
   });
 
-  test("rejects non-Ogg/Opus audio for outbound voice memos", () => {
-    expect(() =>
+  test("sends .mp3 as document", () => {
+    expect(
       buildWhatsAppOutboundPayload({
         text: "",
-        mediaPath: "/tmp/voice.mp3",
+        mediaPath: "/tmp/audio.mp3",
       }),
-    ).toThrow(/Ogg\/Opus/);
+    ).toEqual({
+      document: { url: "/tmp/audio.mp3" },
+      fileName: "audio.mp3",
+      mimetype: "application/octet-stream",
+    });
+  });
+
+  test("sends .opus as voice memo", () => {
+    expect(
+      buildWhatsAppOutboundPayload({
+        text: "",
+        mediaPath: "/tmp/voice.opus",
+      }),
+    ).toEqual({
+      audio: { url: "/tmp/voice.opus" },
+      mimetype: "audio/ogg; codecs=opus",
+      ptt: true,
+    });
   });
 
   test("returns attachment metadata without downloading when media is disabled", async () => {

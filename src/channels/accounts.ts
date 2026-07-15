@@ -53,6 +53,7 @@ const SNAKE_TO_CAMEL: Record<string, string> = {
   group_mode: "groupMode",
   inbound_debounce_ms: "inboundDebounceMs",
   listen_mode: "listenMode",
+  message_prefix: "messagePrefix",
   media_max_bytes: "mediaMaxBytes",
   mention_patterns: "mentionPatterns",
   recipient_aliases: "recipientAliases",
@@ -61,7 +62,14 @@ const SNAKE_TO_CAMEL: Record<string, string> = {
   rich_private_chat_default: "richPrivateChatDefault",
   thread_policy_by_channel: "threadPolicyByChannel",
   transcribe_voice: "transcribeVoice",
+  waiting_behavior: "waitingBehavior",
+  waiting_message: "waitingMessage",
   download_media: "downloadMedia",
+  attachment_filter: "attachmentFilter",
+  attachment_mime_types: "attachmentMimeTypes",
+  attachment_allowed_recipients: "attachmentAllowedRecipients",
+  attachment_allowed_paths: "attachmentAllowedPaths",
+  attachment_path_recursive: "attachmentPathRecursive",
 };
 
 let warnedAboutDualKeys = false;
@@ -353,6 +361,13 @@ function normalizeLoadedAccount<T extends ChannelAccount>(account: T): T {
     next.mentionPatterns = [...(next.mentionPatterns ?? [])];
     next.downloadMedia = next.downloadMedia === true;
     next.transcribeVoice = next.transcribeVoice === true;
+    next.attachmentFilter = next.attachmentFilter !== false;
+    next.attachmentMimeTypes = [...(next.attachmentMimeTypes ?? [])];
+    next.attachmentAllowedRecipients = [
+      ...(next.attachmentAllowedRecipients ?? []),
+    ];
+    next.attachmentAllowedPaths = [...(next.attachmentAllowedPaths ?? [])];
+    next.attachmentPathRecursive = next.attachmentPathRecursive === true;
   }
   if (isSignalChannelAccount(next)) {
     next.baseUrl = next.baseUrl ?? "";
@@ -438,6 +453,11 @@ function makeDefaultLegacyAccount(
       transcribeVoice: config.transcribeVoice === true,
       downloadMedia: config.downloadMedia === true,
       mediaMaxBytes: config.mediaMaxBytes,
+      attachmentFilter: true,
+      attachmentMimeTypes: [],
+      attachmentAllowedRecipients: [],
+      attachmentAllowedPaths: [],
+      attachmentPathRecursive: false,
       createdAt: now,
       updatedAt: now,
     };

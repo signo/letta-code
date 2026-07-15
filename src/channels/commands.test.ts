@@ -197,8 +197,24 @@ describe("channel slash commands", () => {
           enabled: true,
           createdAt: "2026-05-15T00:00:00.000Z",
         },
+        activeModel: "GPT-5.4 Mini",
       }),
     ).toContain("Route: Connected to a Letta agent conversation.");
+    expect(
+      buildChannelStatusMessage(msg, {
+        adapterRunning: true,
+        accountConfigured: true,
+        accountEnabled: true,
+        route: {
+          chatId: "chat-1",
+          agentId: "agent-1",
+          conversationId: "conv-1",
+          enabled: true,
+          createdAt: "2026-05-15T00:00:00.000Z",
+        },
+        activeModel: "GPT-5.4 Mini",
+      }),
+    ).toContain("model: GPT-5.4 Mini.");
 
     const unconnectedText = buildChannelStatusMessage(msg, {
       adapterRunning: false,

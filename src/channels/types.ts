@@ -505,6 +505,7 @@ export type SlackChannelMode = "socket";
 export type SlackAllowBotsMode = false | "mentions";
 export type TelegramGroupMode = "open" | "mention-only";
 export type WhatsAppGroupMode = "disabled" | "mention" | "open";
+export type WhatsAppWaitingBehavior = "off" | "typing_indicator" | "message";
 export type SignalGroupMode = "disabled" | "mention" | "open";
 
 export interface ChannelAccountBinding {
@@ -625,6 +626,13 @@ export interface DiscordChannelConfig {
    * Clamped to `0..10000`.
    */
   inboundDebounceMs?: number;
+  /**
+   * UX feedback while the agent is generating a response. Default "off".
+   * - "off": no presence update, no interim message
+   * - "typing_indicator": sends/refreshes the WhatsApp typing indicator
+   * - "message": sends an interim "waiting" message (NOT YET IMPLEMENTED
+   *   in upstream; reserved for future liveness integration)
+   */
 }
 
 export interface WhatsAppChannelConfig {
@@ -826,6 +834,55 @@ export interface WhatsAppChannelAccount extends ChannelAccountBase {
   downloadMedia?: boolean;
   /** Maximum inbound media bytes to download. Undefined uses channel default. */
   mediaMaxBytes?: number;
+  /** Optional prefix prepended to outbound agent text messages. */
+  messagePrefix?: string;
+  /**
+   * Optional debounce window (ms) for inbound messages.
+   * When greater than 0, short back-to-back messages from the same sender
+   * in the same chat stack into a single combined dispatch (trailing edge).
+   * Default 0 (disabled). Voice notes, attachments, and reactions always bypass.
+   * Clamped to 0..10000.
+   */
+  inboundDebounceMs?: number;
+  /**
+   * UX feedback while the agent is generating a response. Default "off".
+   * - "off": no presence update, no interim message
+   * - "typing_indicator": sends/refreshes the WhatsApp typing indicator
+   * - "message": sends an interim "waiting" message (NOT YET IMPLEMENTED
+   *   in upstream; reserved for future liveness integration)
+   */
+  waitingBehavior?: WhatsAppWaitingBehavior;
+  /** Custom text for waitingBehavior="message". Default: "🤹‍♀️ Working on it..." */
+  waitingMessage?: string;
+  /**
+   * Default true. When true, outbound attachment sends are checked against the
+   * MIME-type, recipient, and source-path allowlists below. When false, all
+   * policy checks are skipped and current behavior is preserved.
+   */
+  attachmentFilter?: boolean;
+  /**
+   * MIME types allowed for outbound attachments. Default [] denies all.
+   * ["*"] allows all. Explicit entries are exact-match against the inferred
+   * MIME type (e.g. "image/png", "application/pdf").
+   */
+  attachmentMimeTypes?: string[];
+  /**
+   * Recipients allowed for outbound attachments. Default [] denies all.
+   * ["*"] allows all. Explicit entries use WhatsApp phone/JID normalization
+   * so both phone numbers and JIDs work.
+   */
+  attachmentAllowedRecipients?: string[];
+  /**
+   * Canonical real paths allowed as attachment sources. Default [] denies all.
+   * Entries should be absolute paths (e.g. "/data/downloads").
+   */
+  attachmentAllowedPaths?: string[];
+  /**
+   * When false (default), source path must exactly match one allowed path.
+   * When true, source may be the allowed path or any child under it.
+   * Symlink escape is prevented by comparing realpath() of source and roots.
+   */
+  attachmentPathRecursive?: boolean;
 }
 
 export interface SignalChannelAccount extends ChannelAccountBase {

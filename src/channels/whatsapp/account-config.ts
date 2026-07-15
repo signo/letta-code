@@ -2,6 +2,7 @@ import type { ChannelAccountConfigAdapter } from "@/channels/plugin-types";
 import type {
   WhatsAppChannelAccount,
   WhatsAppGroupMode,
+  WhatsAppWaitingBehavior,
 } from "@/channels/types";
 import { toWhatsAppConnectionConfig } from "./state";
 
@@ -14,7 +15,20 @@ const WHATSAPP_CONFIG_KEYS = new Set([
   "transcribe_voice",
   "download_media",
   "media_max_bytes",
+  "message_prefix",
+  "inbound_debounce_ms",
+  "waiting_behavior",
+  "waiting_message",
+  "attachment_filter",
+  "attachment_mime_types",
+  "attachment_allowed_recipients",
+  "attachment_allowed_paths",
+  "attachment_path_recursive",
 ]);
+
+function isString(value: unknown): value is string {
+  return typeof value === "string";
+}
 
 function isNullableString(value: unknown): value is string | null {
   return value === null || typeof value === "string";
@@ -36,6 +50,14 @@ function isGroupMode(value: unknown): value is WhatsAppGroupMode {
 
 function isPositiveNumber(value: unknown): value is number {
   return typeof value === "number" && Number.isFinite(value) && value > 0;
+}
+
+function isNonNegativeNumber(value: unknown): value is number {
+  return typeof value === "number" && Number.isFinite(value) && value >= 0;
+}
+
+function isWaitingBehavior(value: unknown): value is WhatsAppWaitingBehavior {
+  return value === "off" || value === "typing_indicator" || value === "message";
 }
 
 export const whatsappAccountConfigAdapter: ChannelAccountConfigAdapter<WhatsAppChannelAccount> =
@@ -60,7 +82,26 @@ export const whatsappAccountConfigAdapter: ChannelAccountConfigAdapter<WhatsAppC
         (config.download_media === undefined ||
           isBoolean(config.download_media)) &&
         (config.media_max_bytes === undefined ||
-          isPositiveNumber(config.media_max_bytes))
+          isPositiveNumber(config.media_max_bytes)) &&
+        (config.message_prefix === undefined ||
+          isString(config.message_prefix)) &&
+        (config.inbound_debounce_ms === undefined ||
+          (isNonNegativeNumber(config.inbound_debounce_ms) &&
+            config.inbound_debounce_ms <= 10000)) &&
+        (config.waiting_behavior === undefined ||
+          isWaitingBehavior(config.waiting_behavior)) &&
+        (config.waiting_message === undefined ||
+          isString(config.waiting_message)) &&
+        (config.attachment_filter === undefined ||
+          isBoolean(config.attachment_filter)) &&
+        (config.attachment_mime_types === undefined ||
+          isStringArray(config.attachment_mime_types)) &&
+        (config.attachment_allowed_recipients === undefined ||
+          isStringArray(config.attachment_allowed_recipients)) &&
+        (config.attachment_allowed_paths === undefined ||
+          isStringArray(config.attachment_allowed_paths)) &&
+        (config.attachment_path_recursive === undefined ||
+          isBoolean(config.attachment_path_recursive))
       );
     },
 
@@ -90,6 +131,37 @@ export const whatsappAccountConfigAdapter: ChannelAccountConfigAdapter<WhatsAppC
         mediaMaxBytes: isPositiveNumber(config.media_max_bytes)
           ? config.media_max_bytes
           : undefined,
+        messagePrefix: isString(config.message_prefix)
+          ? config.message_prefix
+          : undefined,
+        inboundDebounceMs:
+          isNonNegativeNumber(config.inbound_debounce_ms) &&
+          config.inbound_debounce_ms <= 10000
+            ? Math.trunc(config.inbound_debounce_ms)
+            : undefined,
+        waitingBehavior: isWaitingBehavior(config.waiting_behavior)
+          ? config.waiting_behavior
+          : undefined,
+        waitingMessage: isString(config.waiting_message)
+          ? config.waiting_message
+          : undefined,
+        attachmentFilter: isBoolean(config.attachment_filter)
+          ? config.attachment_filter
+          : undefined,
+        attachmentMimeTypes: isStringArray(config.attachment_mime_types)
+          ? [...config.attachment_mime_types]
+          : undefined,
+        attachmentAllowedRecipients: isStringArray(
+          config.attachment_allowed_recipients,
+        )
+          ? [...config.attachment_allowed_recipients]
+          : undefined,
+        attachmentAllowedPaths: isStringArray(config.attachment_allowed_paths)
+          ? [...config.attachment_allowed_paths]
+          : undefined,
+        attachmentPathRecursive: isBoolean(config.attachment_path_recursive)
+          ? config.attachment_path_recursive
+          : undefined,
       };
     },
 
@@ -103,6 +175,17 @@ export const whatsappAccountConfigAdapter: ChannelAccountConfigAdapter<WhatsAppC
         transcribe_voice: account.transcribeVoice === true,
         download_media: account.downloadMedia === true,
         media_max_bytes: account.mediaMaxBytes,
+        message_prefix: account.messagePrefix,
+        inbound_debounce_ms: account.inboundDebounceMs,
+        waiting_behavior: account.waitingBehavior,
+        waiting_message: account.waitingMessage,
+        attachment_filter: account.attachmentFilter,
+        attachment_mime_types: [...(account.attachmentMimeTypes ?? [])],
+        attachment_allowed_recipients: [
+          ...(account.attachmentAllowedRecipients ?? []),
+        ],
+        attachment_allowed_paths: [...(account.attachmentAllowedPaths ?? [])],
+        attachment_path_recursive: account.attachmentPathRecursive,
         ...toWhatsAppConnectionConfig(account.accountId),
       };
     },
@@ -117,6 +200,17 @@ export const whatsappAccountConfigAdapter: ChannelAccountConfigAdapter<WhatsAppC
         transcribe_voice: account.transcribeVoice === true,
         download_media: account.downloadMedia === true,
         media_max_bytes: account.mediaMaxBytes,
+        message_prefix: account.messagePrefix,
+        inbound_debounce_ms: account.inboundDebounceMs,
+        waiting_behavior: account.waitingBehavior,
+        waiting_message: account.waitingMessage,
+        attachment_filter: account.attachmentFilter,
+        attachment_mime_types: [...(account.attachmentMimeTypes ?? [])],
+        attachment_allowed_recipients: [
+          ...(account.attachmentAllowedRecipients ?? []),
+        ],
+        attachment_allowed_paths: [...(account.attachmentAllowedPaths ?? [])],
+        attachment_path_recursive: account.attachmentPathRecursive,
         ...toWhatsAppConnectionConfig(account.accountId),
       };
     },
