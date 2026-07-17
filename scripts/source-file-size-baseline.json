@@ -29,7 +29,7 @@
   "src/mods/mod-engine.test.ts": 2178,
   "src/mods/mod-engine.ts": 1919,
   "src/mods/package-installer.test.ts": 1248,
-  "src/mods/package-installer.ts": 1201,
+  "src/mods/package-installer.ts": 1198,
   "src/mods/package-registry.ts": 1033,
   "src/permissions/read-only-shell.test.ts": 1303,
   "src/permissions/read-only-shell.ts": 2009,
