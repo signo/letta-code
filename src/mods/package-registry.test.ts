@@ -10,14 +10,23 @@ import {
 import { tmpdir } from "node:os";
 import path from "node:path";
 import {
+  __testResetRuntimeVersion,
+  __testSetRuntimeVersion,
+  LETTA_CODE_DESKTOP_VERSION,
+  LETTA_DESKTOP_MODE,
+} from "@/mods/engine-compatibility";
+import {
   getManagedModPackageRootRelativePathForSource,
   listManagedModPackages,
   removeManagedModPackage,
+  resolveManagedModPackages,
   setManagedModPackageEnabled,
   upsertManagedModPackage,
 } from "@/mods/package-registry";
 
 const tempRoots: string[] = [];
+const originalDesktopMode = process.env[LETTA_DESKTOP_MODE];
+const originalDesktopVersion = process.env[LETTA_CODE_DESKTOP_VERSION];
 
 function createTempDir(): string {
   const dir = mkdtempSync(path.join(tmpdir(), "letta-package-registry-"));
@@ -28,6 +37,7 @@ function createTempDir(): string {
 function writePackage(params: {
   capabilities?: string[];
   enabled: boolean;
+  engines?: { lettaCodeCli?: string; lettaCodeDesktop?: string };
   modsRoot: string;
   root: string;
   source: string;
@@ -44,6 +54,7 @@ function writePackage(params: {
           manifestVersion: 1,
           mods: ["mods/index.ts"],
           ...(params.capabilities ? { capabilities: params.capabilities } : {}),
+          ...(params.engines ? { engines: params.engines } : {}),
         },
       },
       null,
@@ -84,6 +95,17 @@ function readRegistry(modsRoot: string): {
 }
 
 afterEach(() => {
+  __testResetRuntimeVersion();
+  if (originalDesktopMode === undefined) {
+    delete process.env[LETTA_DESKTOP_MODE];
+  } else {
+    process.env[LETTA_DESKTOP_MODE] = originalDesktopMode;
+  }
+  if (originalDesktopVersion === undefined) {
+    delete process.env[LETTA_CODE_DESKTOP_VERSION];
+  } else {
+    process.env[LETTA_CODE_DESKTOP_VERSION] = originalDesktopVersion;
+  }
   for (const dir of tempRoots.splice(0)) {
     rmSync(dir, { force: true, recursive: true });
   }
@@ -456,5 +478,321 @@ describe("managed mod package registry", () => {
       }),
     ).toThrow();
     expect(readFileSync(registryPath, "utf8")).toBe("{\n");
+  });
+});
+
+describe("engine compatibility — registry", () => {
+  describe("resolveManagedModPackages", () => {
+    test("registers zero entries/capabilities for incompatible package", () => {
+      const root = createTempDir();
+      const modsRoot = path.join(root, "mods");
+      mkdirSync(modsRoot, { recursive: true });
+      writePackage({
+        enabled: true,
+        engines: { lettaCodeCli: ">=0.29.0" },
+        modsRoot,
+        root: "packages/npm/@caren/incompatible-mod",
+        source: "npm:@caren/incompatible-mod",
+        version: "1.0.0",
+      });
+      writeRegistry(modsRoot, [
+        {
+          enabled: true,
+          root: "packages/npm/@caren/incompatible-mod",
+          source: "npm:@caren/incompatible-mod",
+          version: "1.0.0",
+        },
+      ]);
+      __testSetRuntimeVersion("0.28.8");
+
+      const result = resolveManagedModPackages(modsRoot);
+      expect(result.packages).toHaveLength(0);
+      expect(result.files).toHaveLength(0);
+      expect(result.diagnostics).toHaveLength(1);
+      expect(result.diagnostics[0]?.error.message).toContain(
+        "requires Letta Code CLI",
+      );
+      expect(result.diagnostics[0]?.error.message).toContain(
+        "npm:@caren/incompatible-mod",
+      );
+      expect(result.diagnostics[0]?.error.message).toContain("1.0.0");
+    });
+
+    test("registers entries/capabilities for compatible package", () => {
+      const root = createTempDir();
+      const modsRoot = path.join(root, "mods");
+      mkdirSync(modsRoot, { recursive: true });
+      writePackage({
+        capabilities: ["commands"],
+        enabled: true,
+        engines: { lettaCodeCli: ">=0.28.0" },
+        modsRoot,
+        root: "packages/npm/@caren/compatible-mod",
+        source: "npm:@caren/compatible-mod",
+        version: "1.0.0",
+      });
+      writeRegistry(modsRoot, [
+        {
+          enabled: true,
+          root: "packages/npm/@caren/compatible-mod",
+          source: "npm:@caren/compatible-mod",
+          version: "1.0.0",
+        },
+      ]);
+      __testSetRuntimeVersion("0.28.8");
+
+      const result = resolveManagedModPackages(modsRoot);
+      expect(result.packages).toHaveLength(1);
+      expect(result.files).toHaveLength(1);
+      expect(result.diagnostics).toHaveLength(0);
+    });
+
+    test("loads independent packages when one is incompatible", () => {
+      const root = createTempDir();
+      const modsRoot = path.join(root, "mods");
+      mkdirSync(modsRoot, { recursive: true });
+      writePackage({
+        enabled: true,
+        engines: { lettaCodeCli: ">=0.29.0" },
+        modsRoot,
+        root: "packages/npm/@caren/incompatible-mod",
+        source: "npm:@caren/incompatible-mod",
+        version: "1.0.0",
+      });
+      writePackage({
+        enabled: true,
+        modsRoot,
+        root: "packages/npm/@caren/compatible-no-deps-mod",
+        source: "npm:@caren/compatible-no-deps-mod",
+        version: "1.0.0",
+      });
+      writeRegistry(modsRoot, [
+        {
+          enabled: true,
+          root: "packages/npm/@caren/incompatible-mod",
+          source: "npm:@caren/incompatible-mod",
+          version: "1.0.0",
+        },
+        {
+          enabled: true,
+          root: "packages/npm/@caren/compatible-no-deps-mod",
+          source: "npm:@caren/compatible-no-deps-mod",
+          version: "1.0.0",
+        },
+      ]);
+      __testSetRuntimeVersion("0.28.8");
+
+      const result = resolveManagedModPackages(modsRoot);
+      expect(result.packages).toHaveLength(1);
+      expect(result.packages[0]?.source).toBe(
+        "npm:@caren/compatible-no-deps-mod",
+      );
+      expect(result.files).toHaveLength(1);
+      expect(result.diagnostics).toHaveLength(1);
+    });
+
+    test("package with undeclared engines is compatible (regression)", () => {
+      const root = createTempDir();
+      const modsRoot = path.join(root, "mods");
+      mkdirSync(modsRoot, { recursive: true });
+      writePackage({
+        enabled: true,
+        modsRoot,
+        root: "packages/npm/@caren/legacy-mod",
+        source: "npm:@caren/legacy-mod",
+        version: "0.5.0",
+      });
+      writeRegistry(modsRoot, [
+        {
+          enabled: true,
+          root: "packages/npm/@caren/legacy-mod",
+          source: "npm:@caren/legacy-mod",
+          version: "0.5.0",
+        },
+      ]);
+      __testSetRuntimeVersion("0.27.0");
+
+      const result = resolveManagedModPackages(modsRoot);
+      expect(result.packages).toHaveLength(1);
+      expect(result.diagnostics).toHaveLength(0);
+    });
+
+    test("disabled package with engines is not checked (not applicable)", () => {
+      const root = createTempDir();
+      const modsRoot = path.join(root, "mods");
+      mkdirSync(modsRoot, { recursive: true });
+      writePackage({
+        enabled: false,
+        engines: { lettaCodeCli: ">=0.29.0" },
+        modsRoot,
+        root: "packages/npm/@caren/disabled-incompatible",
+        source: "npm:@caren/disabled-incompatible",
+        version: "1.0.0",
+      });
+      writeRegistry(modsRoot, [
+        {
+          enabled: false,
+          root: "packages/npm/@caren/disabled-incompatible",
+          source: "npm:@caren/disabled-incompatible",
+          version: "1.0.0",
+        },
+      ]);
+      __testSetRuntimeVersion("0.28.8");
+
+      const result = resolveManagedModPackages(modsRoot);
+      expect(result.packages).toHaveLength(0);
+      expect(result.files).toHaveLength(0);
+      // No diagnostic because disabled packages are not checked
+      expect(result.diagnostics).toHaveLength(0);
+    });
+
+    test("applies explicit Desktop evidence during package resolution", () => {
+      const root = createTempDir();
+      const modsRoot = path.join(root, "mods");
+      mkdirSync(modsRoot, { recursive: true });
+      writePackage({
+        enabled: true,
+        engines: { lettaCodeDesktop: ">=0.15.0" },
+        modsRoot,
+        root: "packages/npm/@caren/desktop-mod",
+        source: "npm:@caren/desktop-mod",
+        version: "1.0.0",
+      });
+      writeRegistry(modsRoot, [
+        {
+          enabled: true,
+          root: "packages/npm/@caren/desktop-mod",
+          source: "npm:@caren/desktop-mod",
+          version: "1.0.0",
+        },
+      ]);
+      __testSetRuntimeVersion("0.28.8");
+      process.env[LETTA_DESKTOP_MODE] = "1";
+      process.env[LETTA_CODE_DESKTOP_VERSION] = "0.14.0";
+
+      const result = resolveManagedModPackages(modsRoot);
+      expect(result.packages).toHaveLength(0);
+      expect(result.files).toHaveLength(0);
+      expect(result.diagnostics[0]?.error.message).toContain(
+        "requires Letta Code Desktop",
+      );
+    });
+  });
+
+  describe("listManagedModPackages", () => {
+    test("reports engine incompatibility as diagnostic without hiding package", () => {
+      const root = createTempDir();
+      const modsRoot = path.join(root, "mods");
+      mkdirSync(modsRoot, { recursive: true });
+      writePackage({
+        enabled: true,
+        engines: { lettaCodeCli: ">=0.29.0" },
+        modsRoot,
+        root: "packages/npm/@caren/incompatible-mod",
+        source: "npm:@caren/incompatible-mod",
+        version: "1.0.0",
+      });
+      writeRegistry(modsRoot, [
+        {
+          enabled: true,
+          root: "packages/npm/@caren/incompatible-mod",
+          source: "npm:@caren/incompatible-mod",
+          version: "1.0.0",
+        },
+      ]);
+      __testSetRuntimeVersion("0.28.8");
+
+      const result = listManagedModPackages(modsRoot);
+      // Package is listed (not hidden)
+      expect(result.packages).toHaveLength(1);
+      expect(result.packages[0]?.source).toBe("npm:@caren/incompatible-mod");
+      expect(result.packages[0]?.version).toBe("1.0.0");
+      expect(result.packages[0]?.enabled).toBe(true);
+      // Diagnostic is present
+      expect(result.diagnostics).toHaveLength(1);
+      expect(result.diagnostics[0]?.error.message).toContain(
+        "requires Letta Code CLI",
+      );
+    });
+
+    test("enabled flag preserved for compatible package", () => {
+      const root = createTempDir();
+      const modsRoot = path.join(root, "mods");
+      mkdirSync(modsRoot, { recursive: true });
+      writePackage({
+        enabled: true,
+        engines: { lettaCodeCli: ">=0.28.0" },
+        modsRoot,
+        root: "packages/npm/@caren/compatible-mod",
+        source: "npm:@caren/compatible-mod",
+        version: "1.0.0",
+      });
+      writeRegistry(modsRoot, [
+        {
+          enabled: true,
+          root: "packages/npm/@caren/compatible-mod",
+          source: "npm:@caren/compatible-mod",
+          version: "1.0.0",
+        },
+      ]);
+      __testSetRuntimeVersion("0.28.8");
+
+      const result = listManagedModPackages(modsRoot);
+      expect(result.packages[0]?.enabled).toBe(true);
+      expect(result.diagnostics).toHaveLength(0);
+    });
+
+    test("compatible and incompatible packages in same list", () => {
+      const root = createTempDir();
+      const modsRoot = path.join(root, "mods");
+      mkdirSync(modsRoot, { recursive: true });
+      writePackage({
+        enabled: true,
+        engines: { lettaCodeCli: ">=0.29.0" },
+        modsRoot,
+        root: "packages/npm/@caren/incompatible",
+        source: "npm:@caren/incompatible",
+        version: "1.0.0",
+      });
+      writePackage({
+        enabled: true,
+        engines: { lettaCodeCli: ">=0.28.0" },
+        modsRoot,
+        root: "packages/npm/@caren/compatible",
+        source: "npm:@caren/compatible",
+        version: "1.0.0",
+      });
+      writeRegistry(modsRoot, [
+        {
+          enabled: true,
+          root: "packages/npm/@caren/incompatible",
+          source: "npm:@caren/incompatible",
+          version: "1.0.0",
+        },
+        {
+          enabled: true,
+          root: "packages/npm/@caren/compatible",
+          source: "npm:@caren/compatible",
+          version: "1.0.0",
+        },
+      ]);
+      __testSetRuntimeVersion("0.28.8");
+
+      const result = listManagedModPackages(modsRoot);
+      expect(result.packages).toHaveLength(2);
+      const incompatible = result.packages.find(
+        (p) => p.source === "npm:@caren/incompatible",
+      );
+      const compatible = result.packages.find(
+        (p) => p.source === "npm:@caren/compatible",
+      );
+      expect(incompatible?.enabled).toBe(true);
+      expect(compatible?.enabled).toBe(true);
+      expect(
+        result.diagnostics.some((d) =>
+          d.error.message.includes("incompatible"),
+        ),
+      ).toBe(true);
+    });
   });
 });

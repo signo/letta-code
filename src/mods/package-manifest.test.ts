@@ -172,8 +172,11 @@ describe("Letta package manifest", () => {
         manifestVersion: 1,
         mods: ["mods/index.ts"],
         engines: {
-          lettaCodeCli: "1.2.3+build+extra",
+          // semver rejects ranges with invalid comparator operators
+          lettaCodeCli: ">>>>0.28.0",
+          // non-string range
           lettaCodeDesktop: 1,
+          // unknown engine key
           unknownRuntime: ">=1.0.0",
         },
       },
