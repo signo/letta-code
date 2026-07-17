@@ -1,5 +1,6 @@
 import { readFileSync } from "node:fs";
 import path from "node:path";
+import * as semver from "semver";
 import { isModCapabilityId, type ModCapabilityId } from "@/mods/capabilities";
 import { isModFileExtension } from "@/mods/file-extensions";
 
@@ -84,70 +85,10 @@ export function isSafeLettaPackageModEntryPath(value: string): boolean {
   return isModFileExtension(path.posix.extname(normalized));
 }
 
-function isValidSemverIdentifier(value: string): boolean {
-  return /^[0-9A-Za-z-]+$/.test(value);
-}
-
-function isValidSemverVersion(value: string): boolean {
-  if (value === "*" || /^[xX]$/.test(value)) return true;
-
-  const buildSeparatorIndex = value.indexOf("+");
-  const versionWithPrerelease =
-    buildSeparatorIndex >= 0 ? value.slice(0, buildSeparatorIndex) : value;
-  const build =
-    buildSeparatorIndex >= 0 ? value.slice(buildSeparatorIndex + 1) : undefined;
-  if (build !== undefined) {
-    if (!build || build.includes("+")) return false;
-    const buildParts = build.split(".");
-    if (buildParts.some((part) => !part || !isValidSemverIdentifier(part))) {
-      return false;
-    }
-  }
-
-  const prereleaseSeparatorIndex = versionWithPrerelease.indexOf("-");
-  const version =
-    prereleaseSeparatorIndex >= 0
-      ? versionWithPrerelease.slice(0, prereleaseSeparatorIndex)
-      : versionWithPrerelease;
-  const prerelease =
-    prereleaseSeparatorIndex >= 0
-      ? versionWithPrerelease.slice(prereleaseSeparatorIndex + 1)
-      : undefined;
-  if (prerelease !== undefined) {
-    if (!prerelease) return false;
-    const prereleaseParts = prerelease.split(".");
-    if (
-      prereleaseParts.some((part) => !part || !isValidSemverIdentifier(part))
-    ) {
-      return false;
-    }
-  }
-
-  const parts = version.split(".");
-  if (parts.length < 1 || parts.length > 3) return false;
-
-  return parts.every((part) => {
-    if (part === "*" || /^[xX]$/.test(part)) return true;
-    return /^(0|[1-9]\d*)$/.test(part);
-  });
-}
-
-function isValidSemverComparator(value: string): boolean {
-  const match = value.match(/^(?:<=|>=|<|>|=|~\s*|\^\s*)?(.+)$/);
-  const version = match?.[1]?.trim();
-  if (!version) return false;
-  return isValidSemverVersion(version);
-}
-
 function isValidSemverRange(value: string): boolean {
   const trimmed = value.trim();
   if (!trimmed) return false;
-
-  return trimmed.split("||").every((part) => {
-    const comparators = part.trim().split(/\s+/).filter(Boolean);
-    if (comparators.length === 0) return false;
-    return comparators.every(isValidSemverComparator);
-  });
+  return semver.validRange(trimmed) !== null;
 }
 
 function validateMods(

@@ -17,11 +17,11 @@ import {
 } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
+import { readCompatibleManifest } from "@/mods/engine-compatibility";
 import { isModFileExtension } from "@/mods/file-extensions";
 import {
   LETTA_PACKAGE_MANIFEST_VERSION,
   type LettaPackageCapability,
-  readLettaPackageManifest,
 } from "@/mods/package-manifest";
 import {
   getManagedModPackage,
@@ -244,7 +244,7 @@ function validatePackageSource(packageDirectory: string): PackageSourceInfo {
     throw new Error("package.json.version must be a string");
   }
 
-  const manifestResult = readLettaPackageManifest(packageJsonPath);
+  const manifestResult = readCompatibleManifest(packageJsonPath);
   if (!manifestResult.ok) {
     throw new Error(
       manifestResult.errors
@@ -260,7 +260,6 @@ function validatePackageSource(packageDirectory: string): PackageSourceInfo {
     manifestResult.manifest.mods,
   );
   const repository = formatRepository(packageJson.repository);
-
   return {
     capabilities: manifestResult.manifest.capabilities ?? [],
     entries: manifestResult.manifest.mods,
@@ -934,9 +933,8 @@ function createGitPackageSourceInfo(params: {
   });
   let capabilities: LettaPackageCapability[] = [];
   let entries: string[];
-
   if (packageJson && Object.hasOwn(packageJson, "letta")) {
-    const manifestResult = readLettaPackageManifest(packageJsonPath);
+    const manifestResult = readCompatibleManifest(packageJsonPath);
     if (!manifestResult.ok) {
       throw new Error(
         manifestResult.errors
@@ -965,7 +963,6 @@ function createGitPackageSourceInfo(params: {
     });
     packageJson = readPackageJson(packageJsonPath);
   }
-
   validateManifestEntriesExist(packageDirectory, entries);
   const rootRelativePath = getManagedModPackageRootRelativePathForSource(
     params.parsed.source,

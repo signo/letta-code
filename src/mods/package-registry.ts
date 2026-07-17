@@ -6,10 +6,10 @@ import {
   writeFileSync,
 } from "node:fs";
 import path from "node:path";
+import { readCompatibleManifest } from "@/mods/engine-compatibility";
 import {
   isSafeLettaPackageModEntryPath,
   type LettaPackageCapability,
-  readLettaPackageManifest,
 } from "@/mods/package-manifest";
 
 export const MOD_PACKAGES_REGISTRY_FILENAME = "packages.json";
@@ -473,7 +473,7 @@ function resolvePackage(
   }
 
   const packageJsonPath = path.join(metadata.packageRoot, "package.json");
-  const manifestResult = readLettaPackageManifest(packageJsonPath);
+  const manifestResult = readCompatibleManifest(packageJsonPath, metadata);
   if (!manifestResult.ok) {
     return {
       diagnostics: manifestResult.errors.map((error) =>
@@ -599,7 +599,7 @@ export function listManagedModPackages(
     if (!metadata.ok) return;
 
     const packageJsonPath = path.join(metadata.packageRoot, "package.json");
-    const manifestResult = readLettaPackageManifest(packageJsonPath);
+    const manifestResult = readCompatibleManifest(packageJsonPath, metadata);
     let capabilities: LettaPackageCapability[] = [];
     if (!manifestResult.ok) {
       diagnostics.push(
