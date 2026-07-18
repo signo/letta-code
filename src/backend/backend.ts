@@ -6,6 +6,10 @@ import type {
   forkConversation as forkConversationRequest,
 } from "./api/conversations";
 import {
+  BACKEND_AGENT_ADMIN_CAPABILITIES,
+  type BackendAgentAdminCapabilities,
+} from "./backend-agent-admin-capabilities";
+import {
   type BackendMode,
   resolveBackendMode,
   setConfiguredBackendMode,
@@ -15,6 +19,11 @@ import {
   getLocalBackendStorageDir as getLocalBackendStorageDirFromPaths,
   LOCAL_BACKEND_EXPERIMENTAL_ENV,
 } from "./local/paths";
+
+export {
+  BACKEND_AGENT_ADMIN_CAPABILITIES,
+  type BackendAgentAdminCapabilities,
+} from "./backend-agent-admin-capabilities";
 
 export type { BackendMode };
 export { isExperimentalLocalBackendEnabled } from "./backend-mode";
@@ -127,6 +136,7 @@ export interface ConversationResumeTail {
 }
 
 export interface BackendCapabilities {
+  agentAdmin?: BackendAgentAdminCapabilities;
   remoteMemfs: boolean;
   serverSideToolManagement: boolean;
   serverSecrets: boolean;
@@ -273,6 +283,7 @@ interface APIBackendDeps {
 
 export class APIBackend implements Backend {
   readonly capabilities: BackendCapabilities = {
+    agentAdmin: BACKEND_AGENT_ADMIN_CAPABILITIES,
     remoteMemfs: true,
     serverSideToolManagement: true,
     serverSecrets: true,

@@ -8,6 +8,7 @@ import type { Conversation } from "@letta-ai/letta-client/resources/conversation
 import { mapModelHandleToLlmConfigPatch } from "@/agent/model-handles";
 import type {
   Backend,
+  BackendCapabilities,
   ConversationCreateBody,
   ConversationMessageCreateBody,
   ConversationMessageListBody,
@@ -16,6 +17,7 @@ import type {
   ConversationResumeTailOptions,
   RunMessageStreamBody,
 } from "@/backend/backend";
+import { BACKEND_AGENT_ADMIN_CAPABILITIES } from "@/backend/backend-agent-admin-capabilities";
 import {
   LocalBackendNotFoundError,
   LocalStore,
@@ -182,7 +184,8 @@ export interface HeadlessBackendOptions {
 const FAKE_HEADLESS_MODEL = "dev/fake-headless";
 
 export class HeadlessBackend implements Backend {
-  readonly capabilities = {
+  readonly capabilities: BackendCapabilities = {
+    agentAdmin: BACKEND_AGENT_ADMIN_CAPABILITIES,
     remoteMemfs: false,
     serverSideToolManagement: false,
     serverSecrets: false,

@@ -15,6 +15,7 @@ import type {
   ConversationMessageStreamBody,
   ConversationRecompileBody,
 } from "@/backend/backend";
+import { BACKEND_AGENT_ADMIN_CAPABILITIES } from "@/backend/backend-agent-admin-capabilities";
 import { HeadlessBackend } from "@/backend/dev/headless-backend";
 import {
   DeterministicPongExecutor,
@@ -109,11 +110,9 @@ export interface LocalBackendModEventHooks {
   onLlmStart?: (info: LlmStartInfo) => void | Promise<void>;
   onLlmEnd?: (info: LlmEndInfo) => void | Promise<void>;
 }
-
 function sanitizeFrontmatterValue(value: string): string {
   return value.replace(/\r?\n/g, " ").trim();
 }
-
 function memoryBlockPath(label: string): string {
   const normalized = label.trim().replace(/\\/g, "/").replace(/\.md$/, "");
   if (normalized === "system" || normalized.startsWith("system/")) {
@@ -286,6 +285,7 @@ function createLocalExecutor(
 
 export class LocalBackend extends HeadlessBackend {
   override readonly capabilities: BackendCapabilities = {
+    agentAdmin: BACKEND_AGENT_ADMIN_CAPABILITIES,
     remoteMemfs: false,
     serverSideToolManagement: false,
     serverSecrets: false,
