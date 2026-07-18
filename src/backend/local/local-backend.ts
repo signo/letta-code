@@ -40,7 +40,6 @@ import {
   isLocalSlidingWindowCompactionPlanningError,
   LOCAL_DEFAULT_COMPACTION_MODE,
   LOCAL_DEFAULT_SLIDING_WINDOW_PERCENTAGE,
-  type LocalCompactionMode,
   type LocalCompactionStats,
   type LocalCompleteFunction,
   packageLocalSummaryMessage,
@@ -49,6 +48,14 @@ import {
   summarizeLocalMessagesAll,
   summarizeLocalMessagesSlidingWindow,
 } from "./compaction";
+import {
+  compactionSettingsRecord,
+  localCompactionMode,
+  localCompactionSettingsForStorage,
+  type ResolvedLocalCompactionSettings,
+  resolveCompactionModelPrecedence,
+  validateLocalCompactionSettingsRecord,
+} from "./compaction-settings";
 import type { LocalMessage } from "./local-message";
 import {
   listLocalModels,
@@ -175,57 +182,8 @@ function initialMemoryFilesFromCreateBody(
   );
 }
 
-type LocalCompactionSettingsRecord = Record<string, unknown>;
-
-interface ResolvedLocalCompactionSettings {
-  mode: LocalCompactionMode;
-  prompt?: string | null;
-  clipChars?: number | null;
-  slidingWindowPercentage: number;
-}
-
-function compactionSettingsRecord(
-  value: unknown,
-): LocalCompactionSettingsRecord | null | undefined {
-  if (value === null) return null;
-  return isRecord(value) ? { ...value } : undefined;
-}
-
 function hasOwn(record: Record<string, unknown>, key: string): boolean {
   return Object.hasOwn(record, key);
-}
-
-function localCompactionMode(value: unknown): LocalCompactionMode | undefined {
-  if (value === "all" || value === "sliding_window") return value;
-  return undefined;
-}
-
-function validateLocalCompactionSettingsRecord(
-  settings: LocalCompactionSettingsRecord,
-): void {
-  if (settings.mode === undefined || settings.mode === null) return;
-  if (!localCompactionMode(settings.mode)) {
-    throw new Error(
-      `Local backend compaction currently supports only modes "all" and "sliding_window" (received "${String(
-        settings.mode,
-      )}").`,
-    );
-  }
-}
-
-function localCompactionSettingsForStorage(
-  settings: LocalCompactionSettingsRecord | null | undefined,
-): LocalCompactionSettingsRecord | null | undefined {
-  if (settings === undefined || settings === null) return settings;
-
-  const hasLocalSetting =
-    hasOwn(settings, "mode") ||
-    hasOwn(settings, "prompt") ||
-    hasOwn(settings, "clip_chars") ||
-    hasOwn(settings, "sliding_window_percentage");
-  if (!hasLocalSetting) return undefined;
-
-  return { ...settings };
 }
 
 function supportsMidConversationSystemMessages(
@@ -294,6 +252,9 @@ export class LocalBackend extends HeadlessBackend {
     byokProviderRefresh: false,
     localModelCatalog: true,
     localMemfs: true,
+    // U3: the local backend executes native compaction with an explicit
+    // compaction model without mutating the conversation/agent model.
+    compaction: { explicitModel: true },
   };
 
   private readonly memoryDir?: string;
@@ -767,6 +728,12 @@ export class LocalBackend extends HeadlessBackend {
 
     const mode =
       localCompactionMode(mergedSettings.mode) ?? LOCAL_DEFAULT_COMPACTION_MODE;
+    // U3: explicit compaction model precedence is request override → agent
+    // compaction setting → undefined (conversation-model behavior).
+    const compactionModel = resolveCompactionModelPrecedence(
+      requestSettings,
+      agentSettings,
+    );
     return {
       mode,
       prompt:
@@ -783,6 +750,7 @@ export class LocalBackend extends HeadlessBackend {
         typeof mergedSettings.sliding_window_percentage === "number"
           ? mergedSettings.sliding_window_percentage
           : LOCAL_DEFAULT_SLIDING_WINDOW_PERCENTAGE,
+      ...(compactionModel !== undefined ? { compactionModel } : {}),
     };
   }
 
@@ -893,6 +861,9 @@ export class LocalBackend extends HeadlessBackend {
       prompt: settings.prompt,
       clipChars: settings.clipChars,
       localProviderAuthStorageDir: this.storageDir,
+      ...(settings.compactionModel !== undefined
+        ? { compactionModel: settings.compactionModel }
+        : {}),
     });
     const stats: LocalCompactionStats = {
       trigger,
@@ -945,6 +916,9 @@ export class LocalBackend extends HeadlessBackend {
       prompt: settings.prompt,
       clipChars: settings.clipChars,
       localProviderAuthStorageDir: this.storageDir,
+      ...(settings.compactionModel !== undefined
+        ? { compactionModel: settings.compactionModel }
+        : {}),
     });
     const contextTokensAfter =
       Math.ceil(summary.length / 4) +
