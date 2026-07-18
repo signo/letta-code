@@ -35,11 +35,7 @@ import {
   attachDeprecatedGetContextTrap,
   recordDeprecatedContextApiSourceDiagnostics,
 } from "@/mods/deprecated-api";
-<<<<<<< HEAD
-import {
-  isModFileExtension,
-  isTypeScriptModFileExtension,
-} from "@/mods/file-extensions";
+import { isTypeScriptModFileExtension } from "@/mods/file-extensions";
 import type {
   LettaModApi,
   LettaModDisposer,

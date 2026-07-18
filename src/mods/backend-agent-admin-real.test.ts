@@ -120,6 +120,22 @@ describe("mod active-backend agent administration real backends", () => {
     expect(page.items.map((item) => item.id)).not.toContain(hidden.id);
   });
 
+  test("exposes the active backend's explicit compaction-model capability", () => {
+    const root = mkdtempSync(path.join(tmpdir(), "letta-agent-admin-cap-"));
+    temporaryRoots.push(root);
+    const local = new LocalBackend({
+      storageDir: root,
+      executionMode: "deterministic",
+      memfsEnabled: false,
+    });
+    expect(createAdmin(local).capabilities.compaction).toEqual({
+      explicitModel: true,
+    });
+    expect(createAdmin(new APIBackend()).capabilities.compaction).toEqual({
+      explicitModel: false,
+    });
+  });
+
   test("rejects a result when the owner aborts during an operation", async () => {
     const controller = new AbortController();
     const agent = createAgent("abort-agent");

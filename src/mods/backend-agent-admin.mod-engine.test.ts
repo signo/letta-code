@@ -61,7 +61,7 @@ describe("mod engine agent administration capability", () => {
 
       const agentAdmin = (globalThis as TestGlobal).__agentAdmin as {
         apiVersion: number;
-        capabilities: Record<string, boolean>;
+        capabilities: Record<string, unknown>;
       };
       expect(agentAdmin.apiVersion).toBe(1);
       expect(agentAdmin.capabilities).toEqual({
@@ -70,6 +70,7 @@ describe("mod engine agent administration capability", () => {
         update: true,
         create: false,
         delete: false,
+        compaction: { explicitModel: false },
       });
       expect(agentAdmin).not.toHaveProperty("forkConversation");
       engine.dispose();

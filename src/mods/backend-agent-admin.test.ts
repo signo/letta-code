@@ -55,6 +55,7 @@ function createBackend(
       byokProviderRefresh: false,
       localModelCatalog: false,
       localMemfs: false,
+      compaction: { explicitModel: false },
     },
     listAgents:
       options.listAgents ??
@@ -226,6 +227,7 @@ describe("mod active-backend agent administration", () => {
       update: true,
       create: false,
       delete: false,
+      compaction: { explicitModel: false },
     });
     expect(admin).not.toHaveProperty("backend");
     expect(admin).not.toHaveProperty("create");

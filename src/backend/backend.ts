@@ -145,6 +145,16 @@ export interface BackendCapabilities {
   byokProviderRefresh: boolean;
   localModelCatalog: boolean;
   localMemfs: boolean;
+  /**
+   * Compaction capability descriptor (read-only). Distinguishes the local
+   * backend — which executes native compaction with an explicit compaction
+   * model (U3) without mutating the conversation/agent model — from API/stock
+   * backends, which store `compaction_settings.model` but do not consume it.
+   */
+  compaction: {
+    /** Native local compaction honors an explicit compaction model (U3). */
+    explicitModel: boolean;
+  };
 }
 
 export interface Backend {
@@ -292,6 +302,7 @@ export class APIBackend implements Backend {
     byokProviderRefresh: true,
     localModelCatalog: false,
     localMemfs: false,
+    compaction: { explicitModel: false },
   };
 
   private readonly getApiClientOverride?: GetAPIClient;

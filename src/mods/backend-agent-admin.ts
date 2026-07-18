@@ -80,6 +80,9 @@ export interface ModAgentAdminV1 {
     readonly update: true;
     readonly create: false;
     readonly delete: false;
+    readonly compaction: {
+      readonly explicitModel: boolean;
+    };
   };
   list(options?: ModAgentListOptions): Promise<ModAgentListPage>;
   retrieve(
@@ -437,6 +440,8 @@ export function createModAgentAdmin(
   options: CreateModAgentAdminOptions,
 ): ModAgentAdminV1 {
   const { getBackend, isLive, signal } = options;
+  const explicitCompactionModel =
+    getBackend?.()?.capabilities?.compaction?.explicitModel === true;
   return Object.freeze({
     apiVersion: 1 as const,
     capabilities: Object.freeze({
@@ -445,6 +450,9 @@ export function createModAgentAdmin(
       update: true as const,
       create: false as const,
       delete: false as const,
+      compaction: Object.freeze({
+        explicitModel: explicitCompactionModel,
+      }),
     }),
     async list(requestOptions?: ModAgentListOptions) {
       const requestSignal = requestOptions?.signal;

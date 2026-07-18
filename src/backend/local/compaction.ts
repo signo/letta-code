@@ -12,6 +12,7 @@ import {
 import { isContextWindowOverflowError } from "@/backend/dev/context-window-overflow";
 import {
   applyPiEnvOverrides,
+  isUnselectedLocalModelHandle,
   reasoningForSettings,
   resolvePiModelForAgent,
 } from "@/backend/dev/pi-model-factory";
@@ -126,6 +127,18 @@ export interface LocalAllCompactionInput {
   clipChars?: number | null;
   abortSignal?: AbortSignal;
   localProviderAuthStorageDir?: string;
+  /**
+   * Explicit compaction model (U3). When set to a concrete, non-empty (after
+   * trimming), non-unselected model handle, the summarizer resolves and uses
+   * this model instead of the agent/conversation model, without mutating
+   * either. An explicit model is authoritative: the inherited Fable→Opus
+   * summary fallback is NOT applied to it (the user's choice wins, even for a
+   * Fable model). An invalid explicit model fails visibly through the standard
+   * model resolution path (no silent fallback). When absent/null/empty/
+   * unselected, exact 0.28.8 behavior is preserved (summarize with the
+   * effective conversation model, including the Fable→Opus fallback).
+   */
+  compactionModel?: string | null;
 }
 
 export interface LocalSlidingWindowCompactionPlan {
@@ -403,8 +416,27 @@ async function runGenerateText(
   defaultPrompt: string,
 ): Promise<{ text: string }> {
   const systemPrompt = input.prompt ?? defaultPrompt;
+  // U3 compaction-model seam: an explicit, concrete compaction model takes
+  // precedence over the agent/conversation model for the auxiliary summary
+  // call. Absent/unselected preserves exact 0.28.8 behavior. Invalid explicit
+  // models fail visibly through resolveAvailableLocalModelForTurn /
+  // resolvePiModelForAgent (no silent fallback). The explicit model is trimmed
+  // here so a whitespace-only value is treated as absent (conversation-model
+  // behavior), consistent with resolveExplicitCompactionModel in the backend.
+  const compactionModelHandle =
+    typeof input.compactionModel === "string"
+      ? input.compactionModel.trim()
+      : undefined;
+  const hasExplicitCompactionModel =
+    typeof compactionModelHandle === "string" &&
+    compactionModelHandle.length > 0 &&
+    !isUnselectedLocalModelHandle(compactionModelHandle);
+  const turnModel =
+    hasExplicitCompactionModel && compactionModelHandle
+      ? compactionModelHandle
+      : input.agent.model;
   let localModel = await resolveAvailableLocalModelForTurn({
-    model: input.agent.model,
+    model: turnModel,
     modelSettings: input.agent.model_settings,
     storageDir: input.localProviderAuthStorageDir,
   });
@@ -413,7 +445,12 @@ async function runGenerateText(
     localModel.modelSettings,
     { localProviderAuthStorageDir: input.localProviderAuthStorageDir },
   );
+  // An explicit, concrete compaction model is authoritative: if the user set
+  // it (even to a Fable model), do NOT apply the Fable→Opus summary fallback.
+  // The fallback only applies to the inherited conversation/agent model, where
+  // Fable was never an intentional choice for the summarizer.
   if (
+    !hasExplicitCompactionModel &&
     resolved.model.api === "anthropic-messages" &&
     isFableModel(resolved.model)
   ) {
