@@ -25,6 +25,7 @@ import {
   unregisterPiProvider,
   unregisterPiProvidersForOwner,
 } from "@/backend/dev/pi-provider-mod-registry";
+import { createModBackendApi } from "@/mods/backend-agent-admin";
 import {
   cloneModCapabilities,
   resolveModCapabilities,
@@ -38,6 +39,11 @@ import {
   isModFileExtension,
   isTypeScriptModFileExtension,
 } from "@/mods/file-extensions";
+import type {
+  LettaModApi,
+  LettaModDisposer,
+  LettaModFactory,
+} from "@/mods/mod-api";
 import {
   appendModDiagnostic,
   recordModDiagnostic,
@@ -83,7 +89,6 @@ import type {
   ModOwner,
   ModPanel,
   ModPanelHandle,
-  ModPanelOptions,
   ModPanelRender,
   ModPermission,
   ModPermissionRegistration,
@@ -104,7 +109,11 @@ export const MOD_CACHE_DIRECTORY = getModCacheDirectory();
 
 const requireFromRuntime = createRequire(import.meta.url);
 
-export type LettaModDisposer = () => void;
+export type {
+  LettaModApi,
+  LettaModDisposer,
+  LettaModFactory,
+} from "@/mods/mod-api";
 
 export type ModCapabilityDiagnosticRecorder = (
   diagnostic: Pick<
@@ -112,64 +121,6 @@ export type ModCapabilityDiagnosticRecorder = (
     "capability" | "error" | "phase" | "severity"
   >,
 ) => void;
-
-export type LettaModFactory = (
-  letta: LettaModApi,
-) => undefined | LettaModDisposer | Promise<undefined | LettaModDisposer>;
-
-export interface LettaModApi {
-  capabilities: ModCapabilities;
-  client: Letta;
-  getClient: () => Promise<Letta>;
-  signal: AbortSignal;
-  registerProvider: (
-    name: string,
-    config: PiProviderRegistration,
-  ) => LettaModDisposer;
-  unregisterProvider: (name: string) => void;
-  commands: {
-    register: (command: ModCommandRegistration) => LettaModDisposer;
-    unregister: (id: string) => void;
-  };
-  tools: {
-    register: (tool: ModToolRegistration) => LettaModDisposer;
-    unregister: (name: string) => void;
-  };
-  providers: {
-    register: (
-      name: string,
-      config: PiProviderRegistration,
-    ) => LettaModDisposer;
-    unregister: (name: string) => void;
-  };
-  events: {
-    off: <TName extends ModEventName>(
-      name: TName,
-      handler: ModEventHandler<TName>,
-    ) => void;
-    on: <TName extends ModEventName>(
-      name: TName,
-      handler: ModEventHandler<TName>,
-    ) => LettaModDisposer;
-  };
-  permissions: {
-    register: (permission: ModPermissionRegistration) => LettaModDisposer;
-    unregister: (id: string) => void;
-  };
-  diagnostics: {
-    report: (diagnostic: ModDiagnosticReportOptions) => void;
-  };
-  ui: {
-    closePanel: (id: string) => void;
-    openPanel: (panel: ModPanelOptions) => ModPanelHandle;
-    /** @deprecated Removed. Use openPanel; calls emit a migration diagnostic. */
-    setStatus: (key: string, value?: unknown) => void;
-    /** @deprecated Removed. Use openPanel; calls emit a migration diagnostic. */
-    clearStatus: (key: string) => void;
-    /** @deprecated Removed. Use openPanel; calls emit a migration diagnostic. */
-    setStatuslineRenderer: (renderer: unknown) => void;
-  };
-}
 
 export interface LocalModDisposer {
   abortController?: AbortController;
@@ -224,6 +175,7 @@ export interface ResolveLocalModSourcesOptions {
 }
 
 export interface LoadLocalModsOptions extends ResolveLocalModSourcesOptions {
+  getBackend?: () => Backend | undefined;
   getClient: () => Promise<Letta>;
   capabilities?: ModCapabilities;
   builtinCommandIds?: Iterable<string>;
@@ -1003,6 +955,7 @@ function createLettaModApi(
   registry: LocalModRegistry,
   owner: ModOwner,
   capabilities: ModCapabilities,
+  getBackend: (() => Backend | undefined) | undefined,
   getClient: () => Promise<Letta>,
   onChange: () => void,
   onDiagnostic: ((diagnostic: ModDiagnostic) => void) | undefined,
@@ -1212,6 +1165,7 @@ function createLettaModApi(
 
   const api: LettaModApi = {
     capabilities: cloneModCapabilities(capabilities),
+    backend: createModBackendApi({ getBackend, isLive, signal }),
     client: createLazyClient(getClient),
     getClient,
     signal,
@@ -1568,6 +1522,7 @@ export async function loadLocalMods(
             registry,
             owner,
             capabilities,
+            options.getBackend,
             getConfiguredClient,
             onChange,
             options.onDiagnostic,
@@ -1804,7 +1759,7 @@ export function disposeLocalMods(registry: LocalModRegistry): void {
 }
 
 export function createModEngine(options: CreateModEngineOptions): ModEngine {
-  const { getBackend, onDiagnostic, ...modOptions } = options;
+  const { onDiagnostic, ...modOptions } = options;
   let generation = 0;
   let disposed = false;
   const capabilities = resolveModCapabilities(modOptions.capabilities);
@@ -1891,7 +1846,7 @@ export function createModEngine(options: CreateModEngineOptions): ModEngine {
       if (disposed) {
         return { diagnostics: [], handlerCount: 0, name, results: [] };
       }
-      const invocationBackend = getBackend?.();
+      const invocationBackend = options.getBackend?.();
       const result = await emitLocalModEvent(
         activeRegistry,
         name,

@@ -167,6 +167,11 @@ describe("APIBackend", () => {
       forkConversation: forkConversationMock,
     });
     expect(backend.capabilities).toEqual({
+      agentAdmin: {
+        list: true,
+        retrieve: true,
+        update: true,
+      },
       remoteMemfs: true,
       serverSideToolManagement: true,
       serverSecrets: true,

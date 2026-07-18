@@ -30,9 +30,7 @@ import {
 import type { ModCapabilities, ModContext, ModPanelHandle } from "@/mods/types";
 
 type ModTestGlobal = typeof globalThis & {
-  __lettaModBackend?: unknown;
   __lettaModBackendCalls?: string[];
-  __lettaModForkResult?: { id: string };
   __lettaModHistoryResult?: string[];
   __lettaModCapabilities?: ModCapabilities;
   __lettaModEvents?: string[];
@@ -635,64 +633,6 @@ describe("mod engine", () => {
       expect(Object.keys(snapshot.tools)).toEqual(["visible_tool"]);
     } finally {
       delete testGlobal.__lettaModCapabilities;
-      rmSync(root, { force: true, recursive: true });
-    }
-  });
-
-  test("keeps backend internal and exposes scoped conversation helpers to events", async () => {
-    const root = createTempDir();
-    const testGlobal = globalThis as ModTestGlobal;
-    delete testGlobal.__lettaModBackend;
-    delete testGlobal.__lettaModForkResult;
-
-    const backend = {
-      forkConversation: async (
-        ...[conversationId, options]: Parameters<Backend["forkConversation"]>
-      ) => ({
-        id: `${conversationId}:${options?.agentId}:${options?.hidden ? "hidden" : "visible"}`,
-      }),
-    } as unknown as Backend;
-
-    try {
-      const modDir = path.join(root, "global-mods");
-      const modPath = path.join(modDir, "backend.ts");
-      mkdirSync(modDir, { recursive: true });
-      writeFileSync(
-        modPath,
-        `export default async function(letta) {
-          globalThis.__lettaModBackend = letta.backend;
-          letta.events.on("conversation_open", async (_event, ctx) => {
-            globalThis.__lettaModForkResult = await ctx.conversation.fork({ hidden: true });
-          });
-        }`,
-      );
-
-      const engine = createEngine(root, undefined, backend);
-      await engine.reload();
-      await engine.emitEvent(
-        "conversation_open",
-        {
-          agentId: "agent-1",
-          agentName: "Amelia",
-          conversationId: "conv-1",
-          reason: "startup",
-        },
-        createModContext(),
-      );
-
-      const forkResult = testGlobal.__lettaModForkResult as
-        | { id: string }
-        | undefined;
-      expect(testGlobal.__lettaModBackend).toBeUndefined();
-      expect(forkResult).toMatchObject({
-        id: "conv-1:agent-1:hidden",
-      });
-      expect(getModErrorDiagnostics(engine.getSnapshot().diagnostics)).toEqual(
-        [],
-      );
-    } finally {
-      delete testGlobal.__lettaModBackend;
-      delete testGlobal.__lettaModForkResult;
       rmSync(root, { force: true, recursive: true });
     }
   });
