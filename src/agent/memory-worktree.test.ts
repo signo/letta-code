@@ -10,6 +10,7 @@ import {
 import { tmpdir } from "node:os";
 import { basename, join } from "node:path";
 import {
+  cleanupReflectionTransactions,
   createReflectionMemoryWorktree,
   finalizeReflectionMemoryWorktree,
   integratePendingReflectionMemoryWorktrees,
@@ -114,17 +115,17 @@ describe("reflection memory worktrees", () => {
       shouldMerge: true,
     });
 
-    expect(result.status).toBe("pending_conflict");
-    expect(reflectionIntegrationConsumesTranscript(result)).toBe(true);
-    expect(reflectionIntegrationNeedsReminder(result)).toBe(true);
+    expect(result.status).toBe("failed");
+    expect(reflectionIntegrationConsumesTranscript(result)).toBe(false);
+    expect(reflectionIntegrationNeedsReminder(result)).toBe(false);
     expect(readFileSync(join(memoryDir, "persona.md"), "utf-8")).toBe(
       "parent\n",
     );
     expect(git(memoryDir, ["status", "--porcelain"]).trim()).toBe("");
-    expect(existsSync(worktree.worktreeDir)).toBe(true);
+    expect(existsSync(worktree.worktreeDir)).toBe(false);
     expect(
       git(memoryDir, ["branch", "--list", worktree.branchName]).trim(),
-    ).toContain(worktree.branchName);
+    ).toBe("");
   });
 
   test("cleans up a no-op reflection worktree", async () => {
@@ -210,9 +211,7 @@ describe("reflection memory worktrees", () => {
       await integratePendingReflectionMemoryWorktrees(memoryDir);
 
     expect(unresolved).toEqual([]);
-    expect(readFileSync(join(memoryDir, "pending.md"), "utf-8")).toBe(
-      "pending\n",
-    );
+    expect(existsSync(join(memoryDir, "pending.md"))).toBe(false);
     expect(existsSync(pendingWorktree.worktreeDir)).toBe(false);
     expect(
       git(memoryDir, ["branch", "--list", pendingWorktree.branchName]).trim(),
@@ -239,14 +238,12 @@ describe("reflection memory worktrees", () => {
     const unresolved =
       await integratePendingReflectionMemoryWorktrees(memoryDir);
 
-    expect(unresolved).toHaveLength(1);
-    expect(unresolved[0]?.status).toBe("pending_conflict");
-    expect(unresolved[0]?.reflectionBranch).toBe(pendingWorktree.branchName);
+    expect(unresolved).toEqual([]);
     expect(readFileSync(join(memoryDir, "persona.md"), "utf-8")).toBe(
       "parent\n",
     );
     expect(git(memoryDir, ["status", "--porcelain"]).trim()).toBe("");
-    expect(existsSync(pendingWorktree.worktreeDir)).toBe(true);
+    expect(existsSync(pendingWorktree.worktreeDir)).toBe(false);
   });
 
   test("defers pending reflection integration when parent memory is dirty", async () => {
@@ -265,13 +262,9 @@ describe("reflection memory worktrees", () => {
     const unresolved =
       await integratePendingReflectionMemoryWorktrees(memoryDir);
 
-    expect(unresolved).toHaveLength(1);
-    expect(unresolved[0]?.status).toBe("pending_manual_merge");
-    expect(unresolved[0]?.summary).toContain(
-      "parent memory repo has uncommitted changes",
-    );
-    expect(unresolved[0]?.reflectionBranch).toBe(pendingWorktree.branchName);
-    expect(existsSync(pendingWorktree.worktreeDir)).toBe(true);
+    expect(unresolved).toEqual([]);
+    expect(existsSync(pendingWorktree.worktreeDir)).toBe(false);
+    expect(existsSync(join(memoryDir, "pending.md"))).toBe(false);
   });
 
   test("defers pending reflection integration when reflection worktree is dirty", async () => {
@@ -294,11 +287,9 @@ describe("reflection memory worktrees", () => {
     const unresolved =
       await integratePendingReflectionMemoryWorktrees(memoryDir);
 
-    expect(unresolved).toHaveLength(1);
-    expect(unresolved[0]?.status).toBe("pending_manual_merge");
-    expect(unresolved[0]?.summary).toContain("uncommitted changes");
-    expect(unresolved[0]?.reflectionBranch).toBe(pendingWorktree.branchName);
-    expect(existsSync(pendingWorktree.worktreeDir)).toBe(true);
+    expect(unresolved).toEqual([]);
+    expect(existsSync(pendingWorktree.worktreeDir)).toBe(false);
+    expect(existsSync(join(memoryDir, "pending.md"))).toBe(false);
   });
 
   test("defers merge when parent memory has uncommitted changes", async () => {
@@ -320,10 +311,10 @@ describe("reflection memory worktrees", () => {
       shouldMerge: true,
     });
 
-    expect(result.status).toBe("pending_manual_merge");
-    expect(reflectionIntegrationConsumesTranscript(result)).toBe(true);
-    expect(reflectionIntegrationNeedsReminder(result)).toBe(true);
-    expect(existsSync(worktree.worktreeDir)).toBe(true);
+    expect(result.status).toBe("failed");
+    expect(reflectionIntegrationConsumesTranscript(result)).toBe(false);
+    expect(reflectionIntegrationNeedsReminder(result)).toBe(false);
+    expect(existsSync(worktree.worktreeDir)).toBe(false);
     expect(readFileSync(join(memoryDir, "parent.md"), "utf-8")).toBe("dirty\n");
     expect(git(memoryDir, ["status", "--porcelain"])).toContain("?? parent.md");
   });
@@ -369,5 +360,41 @@ describe("reflection memory worktrees", () => {
     expect(
       git(memoryDir, ["branch", "--list", worktree.branchName]).trim(),
     ).toBe("");
+  });
+
+  test("startup cleanup discards orphaned transactions without touching canonical memory", async () => {
+    const worktree = await createReflectionMemoryWorktree({
+      parentMemoryDir: memoryDir,
+      parentAgentId: "agent-one",
+    });
+    writeFileSync(join(worktree.worktreeDir, "orphan.md"), "orphan\n", "utf-8");
+    git(worktree.worktreeDir, ["add", "orphan.md"]);
+    git(worktree.worktreeDir, ["commit", "-m", "orphan"]);
+
+    expect(await cleanupReflectionTransactions(memoryDir)).toBe(1);
+    expect(existsSync(join(memoryDir, "orphan.md"))).toBe(false);
+    expect(existsSync(worktree.worktreeDir)).toBe(false);
+    expect(existsSync(worktree.leasePath)).toBe(false);
+  });
+
+  test("cleanup is idempotent after promotion already reached canonical HEAD", async () => {
+    const worktree = await createReflectionMemoryWorktree({
+      parentMemoryDir: memoryDir,
+      parentAgentId: "agent-one",
+    });
+    writeFileSync(
+      join(worktree.worktreeDir, "promoted.md"),
+      "promoted\n",
+      "utf-8",
+    );
+    git(worktree.worktreeDir, ["add", "promoted.md"]);
+    git(worktree.worktreeDir, ["commit", "-m", "promoted"]);
+    git(memoryDir, ["merge", worktree.branchName, "--no-edit"]);
+
+    expect(await cleanupReflectionTransactions(memoryDir)).toBe(1);
+    expect(await cleanupReflectionTransactions(memoryDir)).toBe(0);
+    expect(readFileSync(join(memoryDir, "promoted.md"), "utf-8")).toBe(
+      "promoted\n",
+    );
   });
 });

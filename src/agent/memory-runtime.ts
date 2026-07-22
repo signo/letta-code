@@ -23,6 +23,18 @@ export function getActiveMemoryDirectory(agentId: string): string | undefined {
     : undefined;
 }
 
+export async function cleanupReflectionTransactionsForAgent(
+  agentId: string,
+): Promise<void> {
+  if (!agentId || agentId === "loading" || !isActiveMemfsEnabled(agentId)) {
+    return;
+  }
+  const { cleanupReflectionTransactions } = await import(
+    "@/agent/memory-worktree"
+  );
+  await cleanupReflectionTransactions(getScopedMemoryFilesystemRoot(agentId));
+}
+
 export function isLocalMemfsActive(): boolean {
   return getBackend().capabilities.localMemfs;
 }

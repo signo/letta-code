@@ -1,9 +1,9 @@
 import { getScopedMemoryFilesystemRoot } from "@/agent/memory-filesystem";
 import {
   buildReflectionMemoryScope,
+  cleanupReflectionTransactions,
   createReflectionMemoryWorktree,
   finalizeReflectionMemoryWorktree,
-  integratePendingReflectionMemoryWorktrees,
   type ReflectionMemoryWorktree,
   type ReflectionMemoryWorktreeFinalizeResult,
   reflectionIntegrationConsumesTranscript,
@@ -395,14 +395,12 @@ export async function queuePendingReflectionWorktreeReminders(params: {
   conversationId: string;
 }): Promise<void> {
   const memoryDir = getScopedMemoryFilesystemRoot(params.agentId);
-  const unresolvedIntegrations =
-    await integratePendingReflectionMemoryWorktrees(memoryDir);
-  for (const integration of unresolvedIntegrations) {
-    queueReflectionIntegrationReminder({
-      agentId: params.agentId,
-      conversationId: params.conversationId,
-      integration,
-    });
+  const cleaned = await cleanupReflectionTransactions(memoryDir);
+  if (cleaned > 0) {
+    debugLog(
+      "memory",
+      `Discarded ${cleaned} orphaned reflection transaction(s); the next scheduler will start fresh`,
+    );
   }
 }
 
@@ -417,6 +415,7 @@ export async function prepareReflectionMemoryWorktreeLaunch(params: {
   const memoryDir = getScopedMemoryFilesystemRoot(params.agentId);
   const worktree = await createReflectionMemoryWorktree({
     parentMemoryDir: memoryDir,
+    parentAgentId: params.agentId,
   });
   try {
     // An override replaces the whole task prompt; the caller is then responsible

@@ -23,7 +23,10 @@ import { setCurrentAgentId } from "@/agent/context";
 import { regenerateConversationDescription } from "@/agent/conversation-description";
 import { buildConversationModelCarryoverUpdate } from "@/agent/conversation-model-carryover";
 import { getScopedMemoryFilesystemRoot } from "@/agent/memory-filesystem";
-import { isActiveMemfsEnabled } from "@/agent/memory-runtime";
+import {
+  cleanupReflectionTransactionsForAgent,
+  isActiveMemfsEnabled,
+} from "@/agent/memory-runtime";
 import {
   CHATGPT_FAST_SERVICE_TIER,
   getChatGptFastRegistryHandleForModelHandle,
@@ -2583,12 +2586,11 @@ export function App({
     settingsManager.clearCaches();
     await settingsManager.loadProjectSettings();
     await settingsManager.loadLocalProjectSettings();
-
+    await cleanupReflectionTransactionsForAgent(agentId);
     const settings = settingsManager.getSettings();
     setTokenStreamingEnabled(settings.tokenStreaming);
     _setReasoningTabCycleEnabled(settings.reasoningTabCycleEnabled === true);
     _setShowCompactionsEnabled(settings.showCompactions === true);
-
     try {
       refreshCustomCommands();
     } catch (error) {
@@ -2598,7 +2600,6 @@ export function App({
         error instanceof Error ? error.message : String(error),
       );
     }
-
     const durationMs = Date.now() - sessionStartTimeRef.current;
     void modAdapter.events.emit(
       "conversation_close",
@@ -3587,12 +3588,12 @@ export function App({
     }
 
     memoryFilesystemInitializedRef.current = true;
-
     // Git-backed memory: API-backed MemFS clones/pulls from the Letta remote.
     // Local backend MemFS is already a local git repo under the local backend
     // store, so startup only needs to ensure the repo exists.
     (async () => {
       try {
+        await cleanupReflectionTransactionsForAgent(agentId);
         if (getBackend().capabilities.localMemfs) {
           const { initializeLocalMemoryRepo } = await import(
             "@/agent/memory-git"
@@ -3605,7 +3606,6 @@ export function App({
           });
           return;
         }
-
         const { isGitRepo, cloneMemoryRepo, pullMemory } = await import(
           "@/agent/memory-git"
         );

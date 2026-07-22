@@ -3,6 +3,12 @@ import type {
   Backend,
   BackendAgentAdminCapabilities,
 } from "@/backend";
+import {
+  createModReflectionIdentityResolver,
+  createModReflectionPolicy,
+  type ModReflectionPolicy,
+} from "@/mods/backend-reflection-policy";
+import { settingsManager } from "@/settings-manager";
 
 export type ModJsonValue =
   | boolean
@@ -98,6 +104,8 @@ export interface ModAgentAdminV1 {
 
 export interface ModBackendApi {
   readonly agentAdmin?: ModAgentAdminV1;
+  readonly reflectionPolicy?: ModReflectionPolicy;
+  readonly reflectionIdentity?: import("@/mods/backend-reflection-policy-types").ModReflectionIdentityResolver;
 }
 
 interface CreateModAgentAdminOptions {
@@ -524,13 +532,61 @@ export function createModBackendApi(
     isLive: options.isLive,
     signal: options.signal,
   });
+  let reflectionPolicy: ModReflectionPolicy | undefined;
+  let reflectionIdentity: ModBackendApi["reflectionIdentity"];
+  let reflectionBackend: Backend | undefined;
+  function getReflectionPolicy(): ModReflectionPolicy | undefined {
+    const backend = options.getBackend?.();
+    if (
+      !backend ||
+      (!backend.capabilities.reflectionPolicy &&
+        !backend.capabilities.localMemfs)
+    )
+      return undefined;
+    if (backend !== reflectionBackend) {
+      reflectionBackend = backend;
+      const surface = backend.capabilities.localMemfs ? "local" : "api";
+      const hostKey = `letta-code:${settingsManager.getOrCreateDeviceId()}:${surface}`;
+      reflectionPolicy = createModReflectionPolicy({
+        backend,
+        hostKey,
+        surface,
+        persistence: {
+          read: (key) =>
+            settingsManager.getSettings().reflectionPolicies?.[key],
+          write: (key, value) => {
+            const policies = {
+              ...(settingsManager.getSettings().reflectionPolicies ?? {}),
+            };
+            if (value) policies[key] = value;
+            else delete policies[key];
+            settingsManager.updateSettings({ reflectionPolicies: policies });
+          },
+        },
+      });
+      reflectionIdentity = createModReflectionIdentityResolver({
+        hostKey,
+        surface,
+        validateAgent: async (agentId) => {
+          await backend.retrieveAgent(agentId);
+        },
+      });
+    }
+    return reflectionPolicy;
+  }
   return Object.freeze({
+    get reflectionIdentity() {
+      return getReflectionPolicy() ? reflectionIdentity : undefined;
+    },
     get agentAdmin() {
       return isBackendAgentAdminSupported(
         options.getBackend?.()?.capabilities.agentAdmin,
       )
         ? agentAdmin
         : undefined;
+    },
+    get reflectionPolicy() {
+      return getReflectionPolicy();
     },
   });
 }
