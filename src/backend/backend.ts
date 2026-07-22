@@ -137,6 +137,8 @@ export interface ConversationResumeTail {
 
 export interface BackendCapabilities {
   agentAdmin?: BackendAgentAdminCapabilities;
+  /** Host-owned U4 reflection policy service is available through mod runtime. */
+  reflectionPolicy?: { readonly get: true; readonly update: true };
   remoteMemfs: boolean;
   serverSideToolManagement: boolean;
   serverSecrets: boolean;
@@ -294,6 +296,7 @@ interface APIBackendDeps {
 export class APIBackend implements Backend {
   readonly capabilities: BackendCapabilities = {
     agentAdmin: BACKEND_AGENT_ADMIN_CAPABILITIES,
+    reflectionPolicy: { get: true, update: true },
     remoteMemfs: true,
     serverSideToolManagement: true,
     serverSecrets: true,

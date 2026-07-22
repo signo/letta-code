@@ -89,6 +89,12 @@ export interface Settings {
       stepCount: number;
     }
   >;
+  reflectionPolicies?: Record<string, {
+    trigger?: "off" | "step-count" | "compaction-event";
+    stepCount?: number;
+    definition?: { content: string; ownership: "managed" | "bootstrap" };
+    model?: string;
+  }>;
   conversationSwitchAlertEnabled: boolean; // Send system-reminder when switching conversations/agents
   profiles?: Record<string, string>; // DEPRECATED: old format, kept for migration
   createDefaultAgents?: boolean; // Create Memo/Incognito default agents on startup (default: true)
