@@ -1,6 +1,10 @@
 import { describe, expect, test } from "bun:test";
 import type { Backend } from "@/backend";
-import { createModReflectionIdentityResolver, createModReflectionPolicy } from "@/mods/backend-reflection-policy";
+import {
+  createModReflectionIdentityResolver,
+  createModReflectionPolicy,
+  type ExplicitReflectionPolicy,
+} from "@/mods/backend-reflection-policy";
 
 function backend(ids: string[]): Backend {
   return {
@@ -18,10 +22,11 @@ const identity = {
 };
 
 function persistence() {
-  const values = new Map<string, any>();
+  const values = new Map<string, ExplicitReflectionPolicy>();
   return {
     read: (key: string) => values.get(key),
-    write: (key: string, value: any) => value ? values.set(key, value) : values.delete(key),
+    write: (key: string, value: ExplicitReflectionPolicy | undefined) =>
+      value ? values.set(key, value) : values.delete(key),
   };
 }
 
@@ -102,7 +107,8 @@ describe("U4 host reflection policy", () => {
       hostKey: "opaque-host",
       surface: "local",
       validateAgent: async (agentId) => {
-        if (agentId !== "agent-a") throw new Error("agent is outside host scope");
+        if (agentId !== "agent-a")
+          throw new Error("agent is outside host scope");
       },
     });
     expect(await resolver.get("agent-a")).toEqual({
@@ -115,9 +121,22 @@ describe("U4 host reflection policy", () => {
 
   test("survives a policy service restart through host-owned persistence", async () => {
     const durable = persistence();
-    const first = createModReflectionPolicy({ backend: backend(["agent-a"]), surface: "local", hostKey: "restart", persistence: durable });
-    await first.update({ ...identity, hostKey: "restart" }, { trigger: "compaction-event", model: "provider/model" });
-    const second = createModReflectionPolicy({ backend: backend(["agent-a"]), surface: "local", hostKey: "restart", persistence: durable });
+    const first = createModReflectionPolicy({
+      backend: backend(["agent-a"]),
+      surface: "local",
+      hostKey: "restart",
+      persistence: durable,
+    });
+    await first.update(
+      { ...identity, hostKey: "restart" },
+      { trigger: "compaction-event", model: "provider/model" },
+    );
+    const second = createModReflectionPolicy({
+      backend: backend(["agent-a"]),
+      surface: "local",
+      hostKey: "restart",
+      persistence: durable,
+    });
     const restored = await second.get({ ...identity, hostKey: "restart" });
     expect(restored.trigger).toBe("compaction-event");
     expect(restored.model).toBe("provider/model");

@@ -21,13 +21,18 @@ export function createModReflectionIdentityResolver(options: {
   surface: ReflectionSurface;
   validateAgent: (agentId: string) => Promise<unknown>;
 }): import("@/mods/backend-reflection-policy-types").ModReflectionIdentityResolver {
-  if (!options.hostKey) throw new Error("Reflection identity requires a host-owned hostKey");
+  if (!options.hostKey)
+    throw new Error("Reflection identity requires a host-owned hostKey");
   return Object.freeze({
     async get(agentId: string) {
       if (typeof agentId !== "string" || !agentId.trim())
         throw new Error("Reflection identity requires an agentId");
       await options.validateAgent(agentId);
-      return Object.freeze({ agentId, hostKey: options.hostKey, surface: options.surface });
+      return Object.freeze({
+        agentId,
+        hostKey: options.hostKey,
+        surface: options.surface,
+      });
     },
   });
 }
@@ -58,7 +63,6 @@ export type ReflectionPolicyBackendOptions = {
   readonly defaultStepCount?: number;
   readonly persistence?: ReflectionPolicyPersistence;
 };
-
 
 function identityKey(identity: ReflectionAgentIdentity): string {
   return `${identity.hostKey}\u0000${identity.surface}\u0000${identity.agentId}`;
@@ -127,7 +131,8 @@ function freezePolicy(
 export function createModReflectionPolicy(
   options: ReflectionPolicyBackendOptions & { readonly backend: Backend },
 ): ModReflectionPolicy {
-  if (!options.hostKey) throw new Error("Reflection policy requires a host-owned hostKey");
+  if (!options.hostKey)
+    throw new Error("Reflection policy requires a host-owned hostKey");
   const hostKey = options.hostKey;
   const surface = options.surface;
   const persistence = options.persistence;
@@ -298,7 +303,10 @@ export function createModReflectionPolicy(
       (patch.definition !== undefined && capability.agentDefinition) ||
       (patch.model !== undefined && capability.explicitModel);
     if (changed) {
-      persistence?.write(key, Object.keys(current).length ? current : undefined);
+      persistence?.write(
+        key,
+        Object.keys(current).length ? current : undefined,
+      );
       definitionsCache.clear();
       cacheGeneration += 1;
     }

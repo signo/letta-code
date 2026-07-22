@@ -3,12 +3,12 @@ import type {
   Backend,
   BackendAgentAdminCapabilities,
 } from "@/backend";
-import { settingsManager } from "@/settings-manager";
 import {
   createModReflectionIdentityResolver,
   createModReflectionPolicy,
   type ModReflectionPolicy,
 } from "@/mods/backend-reflection-policy";
+import { settingsManager } from "@/settings-manager";
 
 export type ModJsonValue =
   | boolean
@@ -537,7 +537,12 @@ export function createModBackendApi(
   let reflectionBackend: Backend | undefined;
   function getReflectionPolicy(): ModReflectionPolicy | undefined {
     const backend = options.getBackend?.();
-    if (!backend || (!backend.capabilities.reflectionPolicy && !backend.capabilities.localMemfs)) return undefined;
+    if (
+      !backend ||
+      (!backend.capabilities.reflectionPolicy &&
+        !backend.capabilities.localMemfs)
+    )
+      return undefined;
     if (backend !== reflectionBackend) {
       reflectionBackend = backend;
       const surface = backend.capabilities.localMemfs ? "local" : "api";
@@ -547,9 +552,12 @@ export function createModBackendApi(
         hostKey,
         surface,
         persistence: {
-          read: (key) => settingsManager.getSettings().reflectionPolicies?.[key],
+          read: (key) =>
+            settingsManager.getSettings().reflectionPolicies?.[key],
           write: (key, value) => {
-            const policies = { ...(settingsManager.getSettings().reflectionPolicies ?? {}) };
+            const policies = {
+              ...(settingsManager.getSettings().reflectionPolicies ?? {}),
+            };
             if (value) policies[key] = value;
             else delete policies[key];
             settingsManager.updateSettings({ reflectionPolicies: policies });
