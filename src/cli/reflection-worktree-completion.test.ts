@@ -78,13 +78,11 @@ describe("reflection worktree completion messaging", () => {
 
     const result = await finalizeLaunch(worktree, true);
 
-    expect(result.integration.status).toBe("pending_manual_merge");
-    expect(result.integration.summary).toContain(
-      "parent memory repo has uncommitted changes",
-    );
-    expect(result.completionSuccess).toBe(true);
+    expect(result.integration.status).toBe("failed");
+    expect(result.integration.summary).toContain("transaction was discarded");
+    expect(result.completionSuccess).toBe(false);
     expect(result.completionMessage).toBe(
-      "Dreamed; memory merge will finish after pending memory changes are resolved.",
+      "Tried to reflect, but memory updates were not completed cleanly; will retry later.",
     );
   });
 
@@ -105,11 +103,11 @@ describe("reflection worktree completion messaging", () => {
 
     const result = await finalizeLaunch(worktree, true);
 
-    expect(result.integration.status).toBe("pending_conflict");
-    expect(result.integration.summary).toContain("has conflicts");
-    expect(result.completionSuccess).toBe(true);
+    expect(result.integration.status).toBe("failed");
+    expect(result.integration.summary).toContain("transaction was discarded");
+    expect(result.completionSuccess).toBe(false);
     expect(result.completionMessage).toBe(
-      "Dreamed; memory merge will finish after conflicts are resolved.",
+      "Tried to reflect, but memory updates were not completed cleanly; will retry later.",
     );
   });
 
